@@ -6,9 +6,10 @@ interface PlayerState {
   queue: Track[]
   isPlaying: boolean
   volume: number
-  progress: number // 0-1
+  progress: number
   showLyrics: boolean
   lyrics: LyricLine[]
+  seekTo: ((seconds: number) => void) | null  // tambah ini
 
   setCurrentTrack: (track: Track) => void
   addToQueue: (track: Track) => void
@@ -17,6 +18,7 @@ interface PlayerState {
   setProgress: (progress: number) => void
   toggleLyrics: () => void
   setLyrics: (lyrics: LyricLine[]) => void
+  setSeekTo: (fn: (seconds: number) => void) => void  // tambah ini
   playNext: () => void
   playPrev: () => void
 }
@@ -29,6 +31,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   progress: 0,
   showLyrics: false,
   lyrics: [],
+  seekTo: null,
 
   setCurrentTrack: (track) => set({ currentTrack: track, isPlaying: true, progress: 0 }),
   addToQueue: (track) => set((state) => ({ queue: [...state.queue, track] })),
@@ -37,6 +40,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setProgress: (progress) => set({ progress }),
   toggleLyrics: () => set((state) => ({ showLyrics: !state.showLyrics })),
   setLyrics: (lyrics) => set({ lyrics }),
+  setSeekTo: (fn) => set({ seekTo: fn }),
 
   playNext: () => {
     const { queue, currentTrack } = get()

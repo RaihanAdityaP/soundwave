@@ -23,15 +23,19 @@ export default function LikedPage() {
         .order('created_at', { ascending: false })
 
       if (data) {
-        setTracks(data.map((row): Track => ({
-          id: row.track_id,
-          source: row.source,
-          title: row.title,
-          artist: row.artist,
-          thumbnail: row.thumbnail,
-          duration: row.duration,
-          url: row.track_id,
-        })))
+        setTracks(
+          data
+            .filter((row) => !!row.track_id) // buang row yang track_id-nya null
+            .map((row): Track => ({
+              id: row.track_id,
+              source: row.source,
+              title: row.title,
+              artist: row.artist,
+              thumbnail: row.thumbnail,
+              duration: row.duration,
+              url: row.track_id,
+            }))
+        )
       }
       setLoading(false)
     }

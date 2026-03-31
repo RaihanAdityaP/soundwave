@@ -21,7 +21,7 @@ export default function HomePage() {
         {['Pop', 'Hip-Hop', 'Electronic', 'Rock', 'R&B', 'Jazz'].map((genre) => (
           <Link
             key={genre}
-            href={`/search?q=${genre}`}
+            href={`/search?q=${encodeURIComponent(genre)}`}
             className="bg-linear-to-br from-zinc-700 to-zinc-800 hover:from-zinc-600 hover:to-zinc-700 rounded-lg p-6 font-bold text-white text-lg transition-all hover:scale-105"
           >
             {genre}

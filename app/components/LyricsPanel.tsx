@@ -4,8 +4,8 @@ import { useEffect, useRef } from 'react'
 import { usePlayerStore } from '@/store/playerStore'
 
 export default function LyricsPanel() {
-  const { lyrics, progress, currentTrack } = usePlayerStore()
-  const currentTime = currentTrack ? progress * currentTrack.duration : 0
+  const { lyrics, progress, currentTrack, seekTo } = usePlayerStore()
+  const currentTime = currentTrack ? progress * (currentTrack.duration) : 0
 
   const activeIndex = lyrics.reduce((acc, line, i) => {
     if (line.time <= currentTime) return i
@@ -32,10 +32,11 @@ export default function LyricsPanel() {
         <p
           key={i}
           ref={i === activeIndex ? activeRef : null}
-          className={`text-lg font-medium transition-all duration-300 ${
+          onClick={() => seekTo?.(line.time)}
+          className={`text-lg font-medium transition-all duration-300 cursor-pointer select-none ${
             i === activeIndex
               ? 'text-white scale-105 origin-left'
-              : 'text-zinc-600'
+              : 'text-zinc-600 hover:text-zinc-400'
           }`}
         >
           {line.text || '♪'}

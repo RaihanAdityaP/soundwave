@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Heart } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { Track } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 
@@ -9,10 +10,12 @@ export default function LikeButton({ track }: { track: Track }) {
   const [liked, setLiked] = useState(false)
   const [loading, setLoading] = useState(false)
   const supabase = createClient()
+  const router = useRouter()
 
   useEffect(() => {
+    if (!track?.id) return
     checkLiked()
-  }, [track.id])
+  }, [track?.id])
 
   async function checkLiked() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -29,10 +32,13 @@ export default function LikeButton({ track }: { track: Track }) {
   }
 
   async function toggleLike() {
-    setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setLoading(false); return }
+    if (!user) {
+      router.push('/auth/login')
+      return
+    }
 
+    setLoading(true)
     if (liked) {
       await supabase
         .from('liked_songs')
