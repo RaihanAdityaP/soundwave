@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 import { Play, Pause, SkipBack, SkipForward, Volume2, Mic2 } from 'lucide-react'
 import { usePlayerStore } from '@/store/playerStore'
+import LyricsFullscreen from './LyricsFullscreen'
 
 function formatTime(seconds: number) {
   if (isNaN(seconds) || seconds < 0) return '0:00'
@@ -16,7 +17,7 @@ export default function PlayerBar() {
   const {
     currentTrack, isPlaying, volume, progress,
     setIsPlaying, setVolume, setProgress,
-    playNext, playPrev, toggleLyrics, setLyrics,
+    playNext, playPrev, setLyrics,
     setSeekTo,
   } = usePlayerStore()
 
@@ -24,8 +25,8 @@ export default function PlayerBar() {
   const [ytReady, setYtReady] = useState(false)
   const [resolving, setResolving] = useState(false)
   const [resolvedId, setResolvedId] = useState<string | null>(null)
+  const [showFullscreenLyrics, setShowFullscreenLyrics] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  // ref untuk playNext supaya closure di onStateChange selalu dapat versi terbaru
   const playNextRef = useRef(playNext)
   const setIsPlayingRef = useRef(setIsPlaying)
 
@@ -47,7 +48,7 @@ export default function PlayerBar() {
 
     setProgress(0)
 
-    fetch(`/api/lyrics?title=${encodeURIComponent(currentTrack.title)}&artist=${encodeURIComponent(currentTrack.artist)}`)
+    fetch(`/api/lyrics?title=${encodeURIComponent(currentTrack.title)}&artist=${encodeURIComponent(currentTrack.artist)}&duration=${currentTrack.duration}`)
       .then(r => r.json())
       .then(setLyrics)
       .catch(() => {})
@@ -69,37 +70,34 @@ export default function PlayerBar() {
 
   // Load / swap video
   useEffect(() => {
-  if (!resolvedId || !ytReady) return
+    if (!resolvedId || !ytReady) return
 
-  if (!ytPlayerRef.current) {
-    ytPlayerRef.current = new (window as any).YT.Player('yt-player', {
-      height: '0',
-      width: '0',
-      videoId: resolvedId,
-      playerVars: { autoplay: 1 },
-      events: {
-        onReady: () => {
-          // register seekTo ke store saat player siap
-          setSeekTo((seconds: number) => {
-            ytPlayerRef.current?.seekTo(seconds, true)
-          })
+    if (!ytPlayerRef.current) {
+      ytPlayerRef.current = new (window as any).YT.Player('yt-player', {
+        height: '0',
+        width: '0',
+        videoId: resolvedId,
+        playerVars: { autoplay: 1 },
+        events: {
+          onReady: () => {
+            setSeekTo((seconds: number) => {
+              ytPlayerRef.current?.seekTo(seconds, true)
+            })
+          },
+          onStateChange: (e: any) => {
+            if (e.data === 0) playNextRef.current()
+            if (e.data === 1) setIsPlayingRef.current(true)
+            if (e.data === 2) setIsPlayingRef.current(false)
+          },
         },
-        onStateChange: (e: any) => {
-          if (e.data === 0) playNextRef.current()
-          if (e.data === 1) setIsPlayingRef.current(true)
-          if (e.data === 2) setIsPlayingRef.current(false)
-        },
-      },
-    })
-  } else {
-    ytPlayerRef.current.loadVideoById(resolvedId)
-
-    // update juga kalau video diganti
-    setSeekTo((seconds: number) => {
-      ytPlayerRef.current?.seekTo(seconds, true)
-    })
-  }
-}, [resolvedId, ytReady])
+      })
+    } else {
+      ytPlayerRef.current.loadVideoById(resolvedId)
+      setSeekTo((seconds: number) => {
+        ytPlayerRef.current?.seekTo(seconds, true)
+      })
+    }
+  }, [resolvedId, ytReady])
 
   // Play / pause sync
   useEffect(() => {
@@ -141,86 +139,109 @@ export default function PlayerBar() {
   if (!currentTrack) return null
 
   const duration = ytPlayerRef.current?.getDuration?.() || currentTrack.duration
-  const currentSeconds = Math.floor(progress * duration)
+  const safeProgress = isNaN(progress) || !isFinite(progress) ? 0 : progress
+  const currentSeconds = Math.floor(safeProgress * duration)
 
   return (
-    <div className="h-20 bg-zinc-900 border-t border-zinc-800 px-6 flex items-center gap-6 shrink-0">
-      <div id="yt-player" className="hidden" />
+    <>
+      {/* Fullscreen lyrics overlay */}
+      {showFullscreenLyrics && (
+        <LyricsFullscreen onClose={() => setShowFullscreenLyrics(false)} />
+      )}
 
-      {/* Track info */}
-      <div className="flex items-center gap-3 w-56 shrink-0">
-        <div className="relative w-12 h-12 shrink-0 rounded overflow-hidden">
-          <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-white text-sm font-medium truncate">{currentTrack.title}</p>
-          <p className="text-zinc-400 text-xs truncate">{currentTrack.artist}</p>
-        </div>
-      </div>
+      <div className="h-20 bg-zinc-900 border-t border-zinc-800 px-6 flex items-center gap-6 shrink-0">
+        <div id="yt-player" className="hidden" />
 
-      {/* Controls */}
-      <div className="flex-1 flex flex-col items-center gap-1">
-        <div className="flex items-center gap-4">
-          <button onClick={playPrev} className="text-zinc-400 hover:text-white transition-colors">
-            <SkipBack size={20} />
-          </button>
-          <button
-            onClick={() => setIsPlaying(!isPlaying)}
-            disabled={resolving}
-            className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-50"
-          >
-            {resolving
-              ? <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-              : isPlaying
-                ? <Pause size={18} className="text-black fill-black" />
-                : <Play size={18} className="text-black fill-black ml-0.5" />
-            }
-          </button>
-          <button onClick={playNext} className="text-zinc-400 hover:text-white transition-colors">
-            <SkipForward size={20} />
-          </button>
-        </div>
-
-        {/* Progress bar */}
-        <div className="w-full max-w-md flex items-center gap-2">
-          <span className="text-zinc-500 text-xs w-8 text-right tabular-nums">
-            {formatTime(currentSeconds)}
-          </span>
-          <div className="relative flex-1 h-1 group cursor-pointer">
-            <div className="absolute inset-0 bg-zinc-600 rounded-full" />
-            <div
-              className="absolute inset-y-0 left-0 bg-white group-hover:bg-green-500 rounded-full transition-colors pointer-events-none"
-              style={{ width: `${Math.min(progress * 100, 100)}%` }}
-            />
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.001}
-              value={progress}
-              onChange={handleSeek}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
+        {/* Track info — klik untuk buka fullscreen lyrics */}
+        <button
+          className="flex items-center gap-3 w-56 shrink-0 group text-left"
+          onClick={() => setShowFullscreenLyrics(true)}
+          title="Open lyrics"
+        >
+          <div className="relative w-12 h-12 shrink-0 rounded overflow-hidden">
+            <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
+            {/* Hover overlay */}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <Mic2 size={16} className="text-white" />
+            </div>
           </div>
-          <span className="text-zinc-500 text-xs w-8 tabular-nums">
-            {formatTime(duration)}
-          </span>
+          <div className="min-w-0">
+            <p className="text-white text-sm font-medium truncate group-hover:text-green-400 transition-colors">
+              {currentTrack.title}
+            </p>
+            <p className="text-zinc-400 text-xs truncate">{currentTrack.artist}</p>
+          </div>
+        </button>
+
+        {/* Controls */}
+        <div className="flex-1 flex flex-col items-center gap-1">
+          <div className="flex items-center gap-4">
+            <button onClick={playPrev} className="text-zinc-400 hover:text-white transition-colors">
+              <SkipBack size={20} />
+            </button>
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              disabled={resolving}
+              className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-50"
+            >
+              {resolving
+                ? <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                : isPlaying
+                  ? <Pause size={18} className="text-black fill-black" />
+                  : <Play size={18} className="text-black fill-black ml-0.5" />
+              }
+            </button>
+            <button onClick={playNext} className="text-zinc-400 hover:text-white transition-colors">
+              <SkipForward size={20} />
+            </button>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-full max-w-md flex items-center gap-2">
+            <span className="text-zinc-500 text-xs w-8 text-right tabular-nums">
+              {formatTime(currentSeconds)}
+            </span>
+            <div className="relative flex-1 h-1 group cursor-pointer">
+              <div className="absolute inset-0 bg-zinc-600 rounded-full" />
+              <div
+                className="absolute inset-y-0 left-0 bg-white group-hover:bg-green-500 rounded-full transition-colors pointer-events-none"
+                style={{ width: `${Math.min(safeProgress * 100, 100)}%` }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.001}
+                value={safeProgress}
+                onChange={handleSeek}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+            </div>
+            <span className="text-zinc-500 text-xs w-8 tabular-nums">
+              {formatTime(duration)}
+            </span>
+          </div>
+        </div>
+
+        {/* Right controls */}
+        <div className="flex items-center gap-3 w-56 justify-end">
+          {/* Lyrics button */}
+          <button
+            onClick={() => setShowFullscreenLyrics(true)}
+            className="text-zinc-400 hover:text-white transition-colors"
+            title="Open lyrics fullscreen"
+          >
+            <Mic2 size={18} />
+          </button>
+          <Volume2 size={18} className="text-zinc-400 shrink-0" />
+          <input
+            type="range" min={0} max={1} step={0.01}
+            value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            className="w-24 h-1 accent-green-500 cursor-pointer"
+          />
         </div>
       </div>
-
-      {/* Right controls */}
-      <div className="flex items-center gap-3 w-56 justify-end">
-        <button onClick={toggleLyrics} className="text-zinc-400 hover:text-white transition-colors" title="Lyrics">
-          <Mic2 size={18} />
-        </button>
-        <Volume2 size={18} className="text-zinc-400 shrink-0" />
-        <input
-          type="range" min={0} max={1} step={0.01}
-          value={volume}
-          onChange={(e) => setVolume(parseFloat(e.target.value))}
-          className="w-24 h-1 accent-green-500 cursor-pointer"
-        />
-      </div>
-    </div>
+    </>
   )
 }

@@ -3,7 +3,6 @@ import { Geist } from 'next/font/google'
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
 import PlayerBar from '@/components/PlayerBar'
-import LyricsPanel from '@/components/LyricsPanel'
 import { PlayerLayoutWrapper } from '@/components/PlayerLayoutWrapper'
 
 const geist = Geist({ subsets: ['latin'] })
@@ -24,7 +23,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <main className="flex-1 overflow-y-auto bg-linear-to-b from-zinc-800 to-zinc-950 p-8">
                 {children}
               </main>
-              {/* Lyrics panel — rendered here so it's aware of state */}
             </div>
             <PlayerBar />
           </div>

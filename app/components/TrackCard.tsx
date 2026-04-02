@@ -12,17 +12,34 @@ function formatDuration(seconds: number) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-export default function TrackCard({ track }: { track: Track }) {
-  const { setCurrentTrack, addToQueue } = usePlayerStore()
+interface Props {
+  track: Track
+  /** Seluruh daftar lagu di konteks saat ini (search results / liked songs) */
+  trackList?: Track[]
+  /** Posisi track ini di trackList */
+  trackIndex?: number
+}
+
+export default function TrackCard({ track, trackList, trackIndex }: Props) {
+  const { setQueue, currentTrack, isPlaying } = usePlayerStore()
+
+  const isCurrentlyPlaying = currentTrack?.id === track.id && isPlaying
 
   const handlePlay = () => {
-    addToQueue(track)
-    setCurrentTrack(track)
+    if (trackList && trackIndex !== undefined) {
+      // Set seluruh list sebagai queue, mulai dari lagu yang diklik
+      setQueue(trackList, trackIndex)
+    } else {
+      // Fallback: hanya mainkan satu lagu ini
+      setQueue([track], 0)
+    }
   }
 
   return (
     <div
-      className="group flex items-center gap-4 p-3 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+      className={`group flex items-center gap-4 p-3 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer ${
+        isCurrentlyPlaying ? 'bg-zinc-800/60' : ''
+      }`}
       onClick={handlePlay}
     >
       {/* Thumbnail */}
@@ -36,11 +53,23 @@ export default function TrackCard({ track }: { track: Track }) {
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded">
           <Play size={18} className="text-white fill-white" />
         </div>
+        {/* Indikator lagu aktif */}
+        {isCurrentlyPlaying && (
+          <div className="absolute inset-0 flex items-center justify-center rounded">
+            <span className="flex gap-0.75 items-end h-4">
+              <span className="w-0.75 bg-green-400 rounded-full animate-bounce" style={{ height: '60%', animationDelay: '0ms' }} />
+              <span className="w-0.75 bg-green-400 rounded-full animate-bounce" style={{ height: '100%', animationDelay: '150ms' }} />
+              <span className="w-0.75 bg-green-400 rounded-full animate-bounce" style={{ height: '40%', animationDelay: '75ms' }} />
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <p className="text-white text-sm font-medium truncate">{track.title}</p>
+        <p className={`text-sm font-medium truncate ${isCurrentlyPlaying ? 'text-green-400' : 'text-white'}`}>
+          {track.title}
+        </p>
         <p className="text-zinc-400 text-xs truncate">{track.artist}</p>
       </div>
 

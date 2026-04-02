@@ -4,21 +4,21 @@ import { Track, LyricLine } from '@/types'
 interface PlayerState {
   currentTrack: Track | null
   queue: Track[]
+  currentIndex: number
   isPlaying: boolean
   volume: number
   progress: number
-  showLyrics: boolean
   lyrics: LyricLine[]
-  seekTo: ((seconds: number) => void) | null  // tambah ini
+  seekTo: ((seconds: number) => void) | null
 
   setCurrentTrack: (track: Track) => void
+  setQueue: (tracks: Track[], startIndex?: number) => void
   addToQueue: (track: Track) => void
   setIsPlaying: (playing: boolean) => void
   setVolume: (volume: number) => void
   setProgress: (progress: number) => void
-  toggleLyrics: () => void
   setLyrics: (lyrics: LyricLine[]) => void
-  setSeekTo: (fn: (seconds: number) => void) => void  // tambah ini
+  setSeekTo: (fn: (seconds: number) => void) => void
   playNext: () => void
   playPrev: () => void
 }
@@ -26,35 +26,37 @@ interface PlayerState {
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentTrack: null,
   queue: [],
+  currentIndex: -1,
   isPlaying: false,
   volume: 0.8,
   progress: 0,
-  showLyrics: false,
   lyrics: [],
   seekTo: null,
+
+  setQueue: (tracks, startIndex = 0) => {
+    const track = tracks[startIndex] ?? null
+    set({ queue: tracks, currentIndex: startIndex, currentTrack: track, isPlaying: !!track, progress: 0 })
+  },
 
   setCurrentTrack: (track) => set({ currentTrack: track, isPlaying: true, progress: 0 }),
   addToQueue: (track) => set((state) => ({ queue: [...state.queue, track] })),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
   setVolume: (volume) => set({ volume }),
   setProgress: (progress) => set({ progress }),
-  toggleLyrics: () => set((state) => ({ showLyrics: !state.showLyrics })),
   setLyrics: (lyrics) => set({ lyrics }),
   setSeekTo: (fn) => set({ seekTo: fn }),
 
   playNext: () => {
-    const { queue, currentTrack } = get()
-    if (!currentTrack || queue.length === 0) return
-    const idx = queue.findIndex((t) => t.id === currentTrack.id)
-    const next = queue[idx + 1] ?? queue[0]
-    set({ currentTrack: next, isPlaying: true, progress: 0 })
+    const { queue, currentIndex } = get()
+    if (queue.length === 0) return
+    const nextIndex = currentIndex + 1 < queue.length ? currentIndex + 1 : 0
+    set({ currentIndex: nextIndex, currentTrack: queue[nextIndex], isPlaying: true, progress: 0 })
   },
 
   playPrev: () => {
-    const { queue, currentTrack } = get()
-    if (!currentTrack || queue.length === 0) return
-    const idx = queue.findIndex((t) => t.id === currentTrack.id)
-    const prev = queue[idx - 1] ?? queue[queue.length - 1]
-    set({ currentTrack: prev, isPlaying: true, progress: 0 })
+    const { queue, currentIndex } = get()
+    if (queue.length === 0) return
+    const prevIndex = currentIndex - 1 >= 0 ? currentIndex - 1 : queue.length - 1
+    set({ currentIndex: prevIndex, currentTrack: queue[prevIndex], isPlaying: true, progress: 0 })
   },
 }))

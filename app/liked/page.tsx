@@ -25,7 +25,7 @@ export default function LikedPage() {
       if (data) {
         setTracks(
           data
-            .filter((row) => !!row.track_id) // buang row yang track_id-nya null
+            .filter((row) => !!row.track_id)
             .map((row): Track => ({
               id: row.track_id,
               source: row.source,
@@ -65,8 +65,13 @@ export default function LikedPage() {
       )}
 
       <div className="space-y-1">
-        {tracks.map((track) => (
-          <TrackCard key={track.id} track={track} />
+        {tracks.map((track, i) => (
+          <TrackCard
+            key={track.id}
+            track={track}
+            trackList={tracks}
+            trackIndex={i}
+          />
         ))}
       </div>
     </div>

@@ -34,7 +34,6 @@ export default function SearchClient() {
     setLoading(false)
   }, [router])
 
-  // Auto-search if ?q= param is present on mount
   useEffect(() => {
     const q = searchParams.get('q')
     if (q) {
@@ -49,6 +48,9 @@ export default function SearchClient() {
   }
 
   const hasResults = results.deezer.length > 0 || results.youtube.length > 0
+
+  // Gabungkan deezer + youtube jadi satu playlist (deezer duluan)
+  const allTracks = [...results.deezer, ...results.youtube]
 
   return (
     <div className="space-y-8">
@@ -76,8 +78,13 @@ export default function SearchClient() {
             <span className="text-xs text-zinc-500 font-normal ml-1">via Deezer</span>
           </h2>
           <div className="space-y-1">
-            {results.deezer.map((track) => (
-              <TrackCard key={track.id} track={track} />
+            {results.deezer.map((track, i) => (
+              <TrackCard
+                key={track.id}
+                track={track}
+                trackList={allTracks}
+                trackIndex={i} // deezer ada di awal allTracks
+              />
             ))}
           </div>
         </section>
@@ -89,15 +96,20 @@ export default function SearchClient() {
             <span className="text-red-400">▶</span> YouTube
           </h2>
           <div className="space-y-1">
-            {results.youtube.map((track) => (
-              <TrackCard key={track.id} track={track} />
+            {results.youtube.map((track, i) => (
+              <TrackCard
+                key={track.id}
+                track={track}
+                trackList={allTracks}
+                trackIndex={results.deezer.length + i} // youtube ada setelah deezer
+              />
             ))}
           </div>
         </section>
       )}
 
       {!loading && !hasResults && query && (
-        <p className="text-zinc-500 text-sm">No results found for "{query}"</p>
+        <p className="text-zinc-500 text-sm">No results found for &quot;{query}&quot;</p>
       )}
     </div>
   )

@@ -1,6 +1,5 @@
 import { LyricLine } from '@/types'
 
-// Parse LRC format into array of timed lines
 function parseLRC(lrc: string): LyricLine[] {
   const lines = lrc.split('\n')
   const result: LyricLine[] = []
@@ -19,6 +18,33 @@ function parseLRC(lrc: string): LyricLine[] {
   return result.sort((a, b) => a.time - b.time)
 }
 
+function normalize(str: string) {
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function scoreMatch(candidate: any, title: string, artist: string): number {
+  const t = normalize(candidate.trackName ?? '')
+  const a = normalize(candidate.artistName ?? '')
+  const wantTitle = normalize(title)
+  const wantArtist = normalize(artist)
+
+  let score = 0
+
+  if (t === wantTitle) score += 10
+  else if (t.includes(wantTitle) || wantTitle.includes(t)) score += 5
+
+  if (a === wantArtist) score += 5
+  else if (a.includes(wantArtist) || wantArtist.includes(a)) score += 2
+
+  if (candidate.syncedLyrics) score += 3
+
+  return score
+}
+
 export async function fetchLyrics(title: string, artist: string): Promise<LyricLine[]> {
   try {
     const res = await fetch(
@@ -26,15 +52,27 @@ export async function fetchLyrics(title: string, artist: string): Promise<LyricL
     )
     const data = await res.json()
 
-    const track = data.find((t: any) => t.syncedLyrics) || data[0]
-    if (!track) return []
+    if (!Array.isArray(data) || data.length === 0) return []
 
-    if (track.syncedLyrics) return parseLRC(track.syncedLyrics)
+    const scored = data
+      .map((t: any) => ({ track: t, score: scoreMatch(t, title, artist) }))
+      .sort((a, b) => b.score - a.score)
 
-    // Plain lyrics fallback (no timestamps)
-    return track.plainLyrics
-      .split('\n')
-      .map((text: string, i: number) => ({ time: i * 3, text }))
+    // Kalau skor terlalu rendah, kemungkinan tidak relevan
+    if (scored[0].score < 3) return []
+
+    const best = scored[0].track
+
+    if (best.syncedLyrics) return parseLRC(best.syncedLyrics)
+
+    if (best.plainLyrics) {
+      return best.plainLyrics
+        .split('\n')
+        .filter((text: string) => text.trim() !== '')
+        .map((text: string, i: number) => ({ time: i * 3, text }))
+    }
+
+    return []
   } catch {
     return []
   }
