@@ -33,8 +33,20 @@ export async function register(formData: FormData) {
 
   if (error) return { error: error.message }
 
-  revalidatePath('/', 'layout')
-  redirect('/')
+  // Don't redirect — return success so the client can show the verification notice
+  return { success: true }
+}
+
+export async function resendVerification(email: string) {
+  const supabase = await createClient()
+
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email,
+  })
+
+  if (error) return { error: error.message }
+  return { success: true }
 }
 
 export async function logout() {

@@ -2,25 +2,131 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Music2 } from 'lucide-react'
-import { register } from '../actions'
+import { Music2, Mail } from 'lucide-react'
+import { register, resendVerification } from '../actions'
 
 export default function RegisterPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [registered, setRegistered] = useState(false)
+  const [email, setEmail] = useState('')
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setLoading(true)
     setError('')
     const formData = new FormData(e.currentTarget)
+    setEmail(formData.get('email') as string)
     const result = await register(formData)
     if (result?.error) {
       setError(result.error)
       setLoading(false)
+    } else {
+      setRegistered(true)
+      setLoading(false)
     }
   }
 
+  async function handleResend() {
+    setResendStatus('sending')
+    const result = await resendVerification(email)
+    if (result?.error) {
+      setResendStatus('error')
+    } else {
+      setResendStatus('sent')
+      // Reset ke idle setelah 5 detik
+      setTimeout(() => setResendStatus('idle'), 5000)
+    }
+  }
+
+  // ── Verification notice screen ──────────────────────────────────────────
+  if (registered) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+        <div className="w-full max-w-sm space-y-6 text-center">
+          {/* Icon */}
+          <div className="flex justify-center">
+            <div className="w-20 h-20 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center">
+              <Mail size={36} className="text-green-400" />
+            </div>
+          </div>
+
+          {/* Title */}
+          <div>
+            <h1 className="text-white font-bold text-2xl mb-2">Cek Email Kamu</h1>
+            <p className="text-zinc-400 text-sm leading-relaxed">
+              Kami telah mengirimkan link verifikasi ke
+            </p>
+            <p className="text-white font-medium text-sm mt-1 bg-zinc-800 rounded-lg px-4 py-2 inline-block">
+              {email}
+            </p>
+          </div>
+
+          {/* Steps */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 text-left space-y-3">
+            {[
+              'Buka email yang kamu daftarkan',
+              'Klik tombol "Verifikasi Email Saya"',
+              'Kamu akan diarahkan ke SoundWave',
+            ].map((step, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <span className="w-5 h-5 rounded-full bg-green-500/20 text-green-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                <p className="text-zinc-300 text-sm">{step}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Resend section */}
+          <div className="space-y-2">
+            <p className="text-zinc-600 text-xs">
+              Tidak menerima email? Cek folder spam atau kirim ulang.
+            </p>
+
+            {resendStatus === 'sent' && (
+              <p className="text-green-400 text-xs bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2">
+                ✓ Email verifikasi berhasil dikirim ulang!
+              </p>
+            )}
+
+            {resendStatus === 'error' && (
+              <p className="text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
+                Gagal mengirim ulang. Coba beberapa saat lagi.
+              </p>
+            )}
+
+            <div className="flex gap-2 justify-center">
+              <button
+                onClick={handleResend}
+                disabled={resendStatus === 'sending' || resendStatus === 'sent'}
+                className="text-sm text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-full px-4 py-2 transition-colors"
+              >
+                {resendStatus === 'sending' ? 'Mengirim...' : 'Kirim Ulang Email'}
+              </button>
+
+              <button
+                onClick={() => { setRegistered(false); setError(''); setResendStatus('idle') }}
+                className="text-sm text-zinc-500 hover:text-white border border-zinc-800 hover:border-zinc-600 rounded-full px-4 py-2 transition-colors"
+              >
+                Ganti Email
+              </button>
+            </div>
+          </div>
+
+          <Link
+            href="/auth/login"
+            className="block text-zinc-500 hover:text-white text-sm transition-colors"
+          >
+            Sudah verifikasi? Log in →
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Register form ───────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
