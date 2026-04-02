@@ -14,9 +14,7 @@ function formatDuration(seconds: number) {
 
 interface Props {
   track: Track
-  /** Seluruh daftar lagu di konteks saat ini (search results / liked songs) */
   trackList?: Track[]
-  /** Posisi track ini di trackList */
   trackIndex?: number
 }
 
@@ -27,10 +25,8 @@ export default function TrackCard({ track, trackList, trackIndex }: Props) {
 
   const handlePlay = () => {
     if (trackList && trackIndex !== undefined) {
-      // Set seluruh list sebagai queue, mulai dari lagu yang diklik
       setQueue(trackList, trackIndex)
     } else {
-      // Fallback: hanya mainkan satu lagu ini
       setQueue([track], 0)
     }
   }
@@ -48,12 +44,13 @@ export default function TrackCard({ track, trackList, trackIndex }: Props) {
           src={track.thumbnail || '/placeholder.png'}
           alt={track.title}
           fill
+          sizes="48px"
           className="object-cover rounded"
+          unoptimized={track.source === 'deezer'}
         />
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded">
           <Play size={18} className="text-white fill-white" />
         </div>
-        {/* Indikator lagu aktif */}
         {isCurrentlyPlaying && (
           <div className="absolute inset-0 flex items-center justify-center rounded">
             <span className="flex gap-0.75 items-end h-4">

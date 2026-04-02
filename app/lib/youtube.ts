@@ -1,7 +1,14 @@
 import { Track } from '@/types'
 
 const YT_API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY
-const INVIDIOUS_URL = process.env.NEXT_PUBLIC_INVIDIOUS_URL || 'https://invidious.io.lol'
+
+// List of public Invidious instances to try in order
+const INVIDIOUS_INSTANCES = [
+  process.env.NEXT_PUBLIC_INVIDIOUS_URL || 'https://invidious.io.lol',
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://yt.cdaut.de',
+]
 
 function parseDuration(iso: string): number {
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
@@ -11,7 +18,6 @@ function parseDuration(iso: string): number {
          parseInt(match[3] || '0')
 }
 
-// Search via YouTube Data API v3
 export async function searchYouTube(query: string): Promise<Track[]> {
   try {
     if (!YT_API_KEY) throw new Error('No YouTube API key')
@@ -38,31 +44,39 @@ export async function searchYouTube(query: string): Promise<Track[]> {
       url: item.id,
     }))
   } catch {
-    // Fallback to Invidious
     return searchInvidious(query)
   }
 }
 
-// Fallback: Invidious (open-source YouTube frontend, no key needed)
 export async function searchInvidious(query: string): Promise<Track[]> {
-  const res = await fetch(
-    `${INVIDIOUS_URL}/api/v1/search?q=${encodeURIComponent(query)}&type=video`
-  )
-  const data = await res.json()
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await fetch(
+        `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
+        { signal: AbortSignal.timeout(5000) }
+      )
+      if (!res.ok) continue
+      const data = await res.json()
+      if (!Array.isArray(data) || data.length === 0) continue
 
-  return data.slice(0, 10).map((item: any): Track => ({
-    id: item.videoId,
-    source: 'youtube',
-    title: item.title,
-    artist: item.author,
-    thumbnail: `https://i.ytimg.com/vi/${item.videoId}/mqdefault.jpg`,
-    duration: item.lengthSeconds,
-    url: item.videoId,
-  }))
+      return data.slice(0, 10).map((item: any): Track => ({
+        id: item.videoId,
+        source: 'youtube',
+        title: item.title,
+        artist: item.author,
+        thumbnail: `https://i.ytimg.com/vi/${item.videoId}/mqdefault.jpg`,
+        duration: item.lengthSeconds,
+        url: item.videoId,
+      }))
+    } catch {
+      console.warn('[youtube] Invidious instance failed:', instance)
+      continue
+    }
+  }
+  console.error('[youtube] all Invidious instances failed')
+  return []
 }
 
-// Resolve a Deezer track to a YouTube video ID
-// Called at play time so we don't waste API quota on search results
 export async function resolveYouTubeId(query: string): Promise<string | null> {
   try {
     if (YT_API_KEY) {
@@ -72,13 +86,23 @@ export async function resolveYouTubeId(query: string): Promise<string | null> {
       const data = await res.json()
       return data.items?.[0]?.id?.videoId ?? null
     }
-    // Invidious fallback
-    const res = await fetch(
-      `${INVIDIOUS_URL}/api/v1/search?q=${encodeURIComponent(query)}&type=video`
-    )
-    const data = await res.json()
-    return data?.[0]?.videoId ?? null
   } catch {
-    return null
+    // fall through to Invidious
   }
+
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const res = await fetch(
+        `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
+        { signal: AbortSignal.timeout(5000) }
+      )
+      if (!res.ok) continue
+      const data = await res.json()
+      const id = data?.[0]?.videoId
+      if (id) return id
+    } catch {
+      continue
+    }
+  }
+  return null
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
-import { Play, Pause, SkipBack, SkipForward, Volume2, Mic2 } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, Volume2, Volume1, VolumeX, Mic2 } from 'lucide-react'
 import { usePlayerStore } from '@/store/playerStore'
 import LyricsFullscreen from './LyricsFullscreen'
 
@@ -26,6 +26,8 @@ export default function PlayerBar() {
   const [resolving, setResolving] = useState(false)
   const [resolvedId, setResolvedId] = useState<string | null>(null)
   const [showFullscreenLyrics, setShowFullscreenLyrics] = useState(false)
+  const [prevVolume, setPrevVolume] = useState(0.8)
+  const [showVolumePct, setShowVolumePct] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const playNextRef = useRef(playNext)
   const setIsPlayingRef = useRef(setIsPlaying)
@@ -136,15 +138,26 @@ export default function PlayerBar() {
     }
   }
 
+  const handleMuteToggle = () => {
+    if (volume > 0) {
+      setPrevVolume(volume)
+      setVolume(0)
+    } else {
+      setVolume(prevVolume || 0.8)
+    }
+  }
+
   if (!currentTrack) return null
 
   const duration = ytPlayerRef.current?.getDuration?.() || currentTrack.duration
   const safeProgress = isNaN(progress) || !isFinite(progress) ? 0 : progress
   const currentSeconds = Math.floor(safeProgress * duration)
+  const volumePct = Math.round(volume * 100)
+
+  const VolumeIcon = volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2
 
   return (
     <>
-      {/* Fullscreen lyrics overlay */}
       {showFullscreenLyrics && (
         <LyricsFullscreen onClose={() => setShowFullscreenLyrics(false)} />
       )}
@@ -152,7 +165,7 @@ export default function PlayerBar() {
       <div className="h-20 bg-zinc-900 border-t border-zinc-800 px-6 flex items-center gap-6 shrink-0">
         <div id="yt-player" className="hidden" />
 
-        {/* Track info — klik untuk buka fullscreen lyrics */}
+        {/* Track info */}
         <button
           className="flex items-center gap-3 w-56 shrink-0 group text-left"
           onClick={() => setShowFullscreenLyrics(true)}
@@ -160,7 +173,6 @@ export default function PlayerBar() {
         >
           <div className="relative w-12 h-12 shrink-0 rounded overflow-hidden">
             <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
-            {/* Hover overlay */}
             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
               <Mic2 size={16} className="text-white" />
             </div>
@@ -223,7 +235,7 @@ export default function PlayerBar() {
           </div>
         </div>
 
-        {/* Right controls */}
+        {/* Right controls: Lyrics + Volume */}
         <div className="flex items-center gap-3 w-56 justify-end">
           {/* Lyrics button */}
           <button
@@ -233,13 +245,56 @@ export default function PlayerBar() {
           >
             <Mic2 size={18} />
           </button>
-          <Volume2 size={18} className="text-zinc-400 shrink-0" />
-          <input
-            type="range" min={0} max={1} step={0.01}
-            value={volume}
-            onChange={(e) => setVolume(parseFloat(e.target.value))}
-            className="w-24 h-1 accent-green-500 cursor-pointer"
-          />
+
+          {/* Volume section */}
+          <div
+            className="flex items-center gap-2"
+            onMouseEnter={() => setShowVolumePct(true)}
+            onMouseLeave={() => setShowVolumePct(false)}
+          >
+            {/* Mute toggle button */}
+            <button
+              onClick={handleMuteToggle}
+              className="text-zinc-400 hover:text-white transition-colors shrink-0"
+              title={volume === 0 ? 'Unmute' : 'Mute'}
+            >
+              <VolumeIcon size={18} />
+            </button>
+
+            {/* Volume slider with visual fill */}
+            <div className="relative w-24 flex items-center group">
+              {/* Track background */}
+              <div className="absolute inset-y-0 my-auto h-1 w-full bg-zinc-600 rounded-full" />
+              {/* Fill */}
+              <div
+                className="absolute inset-y-0 my-auto h-1 bg-green-500 rounded-full pointer-events-none transition-all"
+                style={{ width: `${volumePct}%` }}
+              />
+              {/* Thumb dot — visible on hover */}
+              <div
+                className="absolute w-3 h-3 bg-white rounded-full shadow pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1/2"
+                style={{ left: `${volumePct}%` }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={volume}
+                onChange={(e) => setVolume(parseFloat(e.target.value))}
+                className="relative w-full h-4 opacity-0 cursor-pointer z-10"
+              />
+            </div>
+
+            {/* Percentage label */}
+            <span
+              className={`text-zinc-400 text-xs tabular-nums w-7 text-right transition-opacity duration-150 ${
+                showVolumePct ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              {volumePct}%
+            </span>
+          </div>
         </div>
       </div>
     </>
