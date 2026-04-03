@@ -43,14 +43,14 @@ export default function LikedPage() {
   }, [])
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-14 h-14 rounded-lg bg-linear-to-br from-purple-600 to-blue-500 flex items-center justify-center">
-          <Heart size={28} className="text-white fill-white" />
+    <div className="space-y-5 md:space-y-6">
+      <div className="flex items-center gap-3 md:gap-4">
+        <div className="w-12 h-12 md:w-14 md:h-14 rounded-lg bg-linear-to-br from-purple-600 to-blue-500 flex items-center justify-center shrink-0">
+          <Heart size={24} className="text-white fill-white" />
         </div>
         <div>
           <p className="text-zinc-400 text-xs uppercase tracking-widest">Playlist</p>
-          <h1 className="text-2xl font-bold text-white">Liked Songs</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-white">Liked Songs</h1>
           <p className="text-zinc-400 text-sm">{tracks.length} songs</p>
         </div>
       </div>
@@ -58,9 +58,9 @@ export default function LikedPage() {
       {loading && <p className="text-zinc-400 text-sm">Loading...</p>}
 
       {!loading && tracks.length === 0 && (
-        <div className="text-center py-20 text-zinc-500">
-          <Heart size={40} className="mx-auto mb-3 opacity-30" />
-          <p>Songs you like will appear here</p>
+        <div className="text-center py-16 md:py-20 text-zinc-500">
+          <Heart size={36} className="mx-auto mb-3 opacity-30" />
+          <p className="text-sm">Songs you like will appear here</p>
         </div>
       )}
 

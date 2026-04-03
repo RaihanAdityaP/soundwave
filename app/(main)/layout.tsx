@@ -8,7 +8,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       <div className="flex h-screen flex-col">
         <div className="flex flex-1 overflow-hidden">
           <Sidebar />
-          <main className="flex-1 overflow-y-auto bg-linear-to-b from-zinc-800 to-zinc-950 p-8">
+          <main className="flex-1 overflow-y-auto bg-linear-to-b from-zinc-800 to-zinc-950 p-4 md:p-8 pb-36 md:pb-8">
             {children}
           </main>
         </div>

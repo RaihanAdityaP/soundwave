@@ -48,14 +48,12 @@ export default function SearchClient() {
   }
 
   const hasResults = results.deezer.length > 0 || results.youtube.length > 0
-
-  // Gabungkan deezer + youtube jadi satu playlist (deezer duluan)
   const allTracks = [...results.deezer, ...results.youtube]
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 md:space-y-8">
       <form onSubmit={handleSubmit}>
-        <div className="flex items-center gap-3 bg-zinc-800 rounded-full px-5 py-3 max-w-lg">
+        <div className="flex items-center gap-3 bg-zinc-800 rounded-full px-4 md:px-5 py-3 w-full md:max-w-lg">
           <Search size={18} className="text-zinc-400 shrink-0" />
           <input
             value={query}
@@ -73,7 +71,7 @@ export default function SearchClient() {
 
       {!loading && results.deezer.length > 0 && (
         <section>
-          <h2 className="text-white font-bold text-lg mb-3 flex items-center gap-2">
+          <h2 className="text-white font-bold text-base md:text-lg mb-3 flex items-center gap-2">
             <span className="text-purple-400">♫</span> Best Matches
             <span className="text-xs text-zinc-500 font-normal ml-1">via Deezer</span>
           </h2>
@@ -83,7 +81,7 @@ export default function SearchClient() {
                 key={track.id}
                 track={track}
                 trackList={allTracks}
-                trackIndex={i} // deezer ada di awal allTracks
+                trackIndex={i}
               />
             ))}
           </div>
@@ -92,7 +90,7 @@ export default function SearchClient() {
 
       {!loading && results.youtube.length > 0 && (
         <section>
-          <h2 className="text-white font-bold text-lg mb-3 flex items-center gap-2">
+          <h2 className="text-white font-bold text-base md:text-lg mb-3 flex items-center gap-2">
             <span className="text-red-400">▶</span> YouTube
           </h2>
           <div className="space-y-1">
@@ -101,7 +99,7 @@ export default function SearchClient() {
                 key={track.id}
                 track={track}
                 trackList={allTracks}
-                trackIndex={results.deezer.length + i} // youtube ada setelah deezer
+                trackIndex={results.deezer.length + i}
               />
             ))}
           </div>

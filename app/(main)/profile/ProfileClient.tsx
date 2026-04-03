@@ -34,75 +34,75 @@ export default function ProfileClient({ user, profile, likedCount }: Props) {
     .toUpperCase()
 
   return (
-    <div className="max-w-lg space-y-8">
+    <div className="max-w-lg space-y-6 md:space-y-8">
       {/* Avatar + name */}
-      <div className="flex items-center gap-6">
-        <div className="w-24 h-24 rounded-full bg-linear-to-br from-green-500 to-emerald-700 flex items-center justify-center text-black font-bold text-3xl shrink-0">
+      <div className="flex items-center gap-4 md:gap-6">
+        <div className="w-16 h-16 md:w-24 md:h-24 rounded-full bg-linear-to-br from-green-500 to-emerald-700 flex items-center justify-center text-black font-bold text-2xl md:text-3xl shrink-0">
           {initials}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-zinc-400 text-xs uppercase tracking-widest mb-1">Profile</p>
           {editing ? (
             <div className="flex items-center gap-2">
               <input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="bg-zinc-800 text-white rounded-lg px-3 py-1.5 text-lg font-bold outline-none focus:ring-2 focus:ring-green-500"
+                className="bg-zinc-800 text-white rounded-lg px-3 py-1.5 text-base md:text-lg font-bold outline-none focus:ring-2 focus:ring-green-500 min-w-0 flex-1"
                 autoFocus
               />
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="p-1.5 rounded-full bg-green-500 hover:bg-green-400 text-black transition-colors disabled:opacity-50"
+                className="p-1.5 rounded-full bg-green-500 hover:bg-green-400 text-black transition-colors disabled:opacity-50 shrink-0"
               >
                 <Check size={16} />
               </button>
               <button
                 onClick={() => { setEditing(false); setUsername(profile?.username ?? '') }}
-                className="p-1.5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white transition-colors"
+                className="p-1.5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white transition-colors shrink-0"
               >
                 <X size={16} />
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-white truncate">
+              <h1 className="text-xl md:text-2xl font-bold text-white truncate">
                 {profile?.username ?? user.email}
               </h1>
               <button
                 onClick={() => setEditing(true)}
-                className="p-1.5 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"
+                className="p-1.5 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors shrink-0"
               >
                 <Pencil size={14} />
               </button>
             </div>
           )}
-          <p className="text-zinc-500 text-sm">{user.email}</p>
+          <p className="text-zinc-500 text-xs md:text-sm truncate">{user.email}</p>
           {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4">
         <Link
           href="/liked"
-          className="bg-zinc-800 hover:bg-zinc-700 transition-colors rounded-xl p-5 flex items-center gap-4"
+          className="bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-700 transition-colors rounded-xl p-4 md:p-5 flex items-center gap-3 md:gap-4"
         >
-          <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-            <Heart size={18} className="text-green-500" />
+          <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
+            <Heart size={16} className="text-green-500" />
           </div>
           <div>
-            <p className="text-white font-bold text-xl">{likedCount}</p>
+            <p className="text-white font-bold text-lg md:text-xl">{likedCount}</p>
             <p className="text-zinc-400 text-xs">Liked Songs</p>
           </div>
         </Link>
 
-        <div className="bg-zinc-800 rounded-xl p-5 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
-            <User size={18} className="text-blue-400" />
+        <div className="bg-zinc-800 rounded-xl p-4 md:p-5 flex items-center gap-3 md:gap-4">
+          <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0">
+            <User size={16} className="text-blue-400" />
           </div>
-          <div>
-            <p className="text-white font-bold text-sm truncate max-w-25">
+          <div className="min-w-0">
+            <p className="text-white font-bold text-sm truncate">
               {user.email?.split('@')[0]}
             </p>
             <p className="text-zinc-400 text-xs">Member</p>

@@ -33,13 +33,13 @@ export default function TrackCard({ track, trackList, trackIndex }: Props) {
 
   return (
     <div
-      className={`group flex items-center gap-4 p-3 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer ${
+      className={`group flex items-center gap-3 md:gap-4 p-2.5 md:p-3 rounded-lg hover:bg-zinc-800 active:bg-zinc-800 transition-colors cursor-pointer ${
         isCurrentlyPlaying ? 'bg-zinc-800/60' : ''
       }`}
       onClick={handlePlay}
     >
       {/* Thumbnail */}
-      <div className="relative w-12 h-12 shrink-0">
+      <div className="relative w-11 h-11 md:w-12 md:h-12 shrink-0">
         <Image
           src={track.thumbnail || '/placeholder.png'}
           alt={track.title}
@@ -49,7 +49,7 @@ export default function TrackCard({ track, trackList, trackIndex }: Props) {
           unoptimized={track.source === 'deezer'}
         />
         <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded">
-          <Play size={18} className="text-white fill-white" />
+          <Play size={16} className="text-white fill-white" />
         </div>
         {isCurrentlyPlaying && (
           <div className="absolute inset-0 flex items-center justify-center rounded">
@@ -70,8 +70,8 @@ export default function TrackCard({ track, trackList, trackIndex }: Props) {
         <p className="text-zinc-400 text-xs truncate">{track.artist}</p>
       </div>
 
-      {/* Source badge */}
-      <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
+      {/* Source badge — hidden on small mobile */}
+      <span className={`hidden sm:inline-flex text-xs px-2 py-0.5 rounded-full shrink-0 ${
         track.source === 'youtube'
           ? 'bg-red-900/50 text-red-400'
           : 'bg-purple-900/50 text-purple-400'
@@ -79,8 +79,8 @@ export default function TrackCard({ track, trackList, trackIndex }: Props) {
         {track.source === 'youtube' ? 'YT' : 'DZ'}
       </span>
 
-      {/* Duration */}
-      <span className="text-zinc-500 text-xs shrink-0">{formatDuration(track.duration)}</span>
+      {/* Duration — hidden on small mobile */}
+      <span className="hidden sm:block text-zinc-500 text-xs shrink-0">{formatDuration(track.duration)}</span>
 
       {/* Like */}
       <div onClick={(e) => e.stopPropagation()}>

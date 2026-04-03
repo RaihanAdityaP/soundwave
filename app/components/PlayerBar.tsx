@@ -35,7 +35,6 @@ export default function PlayerBar() {
   useEffect(() => { playNextRef.current = playNext }, [playNext])
   useEffect(() => { setIsPlayingRef.current = setIsPlaying }, [setIsPlaying])
 
-  // Load YouTube IFrame API once
   useEffect(() => {
     if ((window as any).YT?.Player) { setYtReady(true); return }
     const tag = document.createElement('script')
@@ -44,7 +43,6 @@ export default function PlayerBar() {
     ;(window as any).onYouTubeIframeAPIReady = () => setYtReady(true)
   }, [])
 
-  // When track changes: resolve YouTube ID + fetch lyrics
   useEffect(() => {
     if (!currentTrack) return
 
@@ -70,7 +68,6 @@ export default function PlayerBar() {
     }
   }, [currentTrack?.id])
 
-  // Load / swap video
   useEffect(() => {
     if (!resolvedId || !ytReady) return
 
@@ -101,18 +98,15 @@ export default function PlayerBar() {
     }
   }, [resolvedId, ytReady])
 
-  // Play / pause sync
   useEffect(() => {
     if (!ytPlayerRef.current?.playVideo) return
     isPlaying ? ytPlayerRef.current.playVideo() : ytPlayerRef.current.pauseVideo()
   }, [isPlaying])
 
-  // Volume sync
   useEffect(() => {
     if (ytPlayerRef.current?.setVolume) ytPlayerRef.current.setVolume(volume * 100)
   }, [volume])
 
-  // Progress tracking
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (!currentTrack) return
@@ -162,10 +156,10 @@ export default function PlayerBar() {
         <LyricsFullscreen onClose={() => setShowFullscreenLyrics(false)} />
       )}
 
-      <div className="h-20 bg-zinc-900 border-t border-zinc-800 px-6 flex items-center gap-6 shrink-0">
+      {/* Desktop player */}
+      <div className="hidden md:flex h-20 bg-zinc-900 border-t border-zinc-800 px-6 items-center gap-6 shrink-0">
         <div id="yt-player" className="hidden" />
 
-        {/* Track info */}
         <button
           className="flex items-center gap-3 w-56 shrink-0 group text-left"
           onClick={() => setShowFullscreenLyrics(true)}
@@ -185,7 +179,6 @@ export default function PlayerBar() {
           </div>
         </button>
 
-        {/* Controls */}
         <div className="flex-1 flex flex-col items-center gap-1">
           <div className="flex items-center gap-4">
             <button onClick={playPrev} className="text-zinc-400 hover:text-white transition-colors">
@@ -208,7 +201,6 @@ export default function PlayerBar() {
             </button>
           </div>
 
-          {/* Progress bar */}
           <div className="w-full max-w-md flex items-center gap-2">
             <span className="text-zinc-500 text-xs w-8 text-right tabular-nums">
               {formatTime(currentSeconds)}
@@ -235,9 +227,7 @@ export default function PlayerBar() {
           </div>
         </div>
 
-        {/* Right controls: Lyrics + Volume */}
         <div className="flex items-center gap-3 w-56 justify-end">
-          {/* Lyrics button */}
           <button
             onClick={() => setShowFullscreenLyrics(true)}
             className="text-zinc-400 hover:text-white transition-colors"
@@ -246,13 +236,11 @@ export default function PlayerBar() {
             <Mic2 size={18} />
           </button>
 
-          {/* Volume section */}
           <div
             className="flex items-center gap-2"
             onMouseEnter={() => setShowVolumePct(true)}
             onMouseLeave={() => setShowVolumePct(false)}
           >
-            {/* Mute toggle button */}
             <button
               onClick={handleMuteToggle}
               className="text-zinc-400 hover:text-white transition-colors shrink-0"
@@ -261,16 +249,12 @@ export default function PlayerBar() {
               <VolumeIcon size={18} />
             </button>
 
-            {/* Volume slider with visual fill */}
             <div className="relative w-24 flex items-center group">
-              {/* Track background */}
               <div className="absolute inset-y-0 my-auto h-1 w-full bg-zinc-600 rounded-full" />
-              {/* Fill */}
               <div
                 className="absolute inset-y-0 my-auto h-1 bg-green-500 rounded-full pointer-events-none transition-all"
                 style={{ width: `${volumePct}%` }}
               />
-              {/* Thumb dot — visible on hover */}
               <div
                 className="absolute w-3 h-3 bg-white rounded-full shadow pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1/2"
                 style={{ left: `${volumePct}%` }}
@@ -286,7 +270,6 @@ export default function PlayerBar() {
               />
             </div>
 
-            {/* Percentage label */}
             <span
               className={`text-zinc-400 text-xs tabular-nums w-7 text-right transition-opacity duration-150 ${
                 showVolumePct ? 'opacity-100' : 'opacity-0'
@@ -294,6 +277,68 @@ export default function PlayerBar() {
             >
               {volumePct}%
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile player — sits above bottom nav */}
+      <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 bg-zinc-800/95 backdrop-blur-md border-t border-zinc-700/50 px-3 py-2">
+        <div id="yt-player-mobile" className="hidden" />
+
+        {/* Progress bar strip */}
+        <div className="relative h-0.5 w-full mb-2 rounded-full overflow-hidden bg-zinc-700">
+          <div
+            className="absolute inset-y-0 left-0 bg-green-500 rounded-full"
+            style={{ width: `${Math.min(safeProgress * 100, 100)}%` }}
+          />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.001}
+            value={safeProgress}
+            onChange={handleSeek}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Thumbnail + info */}
+          <button
+            className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
+            onClick={() => setShowFullscreenLyrics(true)}
+          >
+            <div className="relative w-10 h-10 shrink-0 rounded overflow-hidden">
+              <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-white text-sm font-medium truncate leading-tight">
+                {currentTrack.title}
+              </p>
+              <p className="text-zinc-400 text-xs truncate">{currentTrack.artist}</p>
+            </div>
+          </button>
+
+          {/* Controls */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={playPrev} className="text-zinc-400 p-2">
+              <SkipBack size={18} />
+            </button>
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              disabled={resolving}
+              className="w-9 h-9 rounded-full bg-white flex items-center justify-center disabled:opacity-50"
+            >
+              {resolving
+                ? <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                : isPlaying
+                  ? <Pause size={17} className="text-black fill-black" />
+                  : <Play size={17} className="text-black fill-black ml-0.5" />
+              }
+            </button>
+            <button onClick={playNext} className="text-zinc-400 p-2">
+              <SkipForward size={18} />
+            </button>
           </div>
         </div>
       </div>
