@@ -152,7 +152,7 @@ export default function LibraryPage() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
           {likedPlaylist && (
-            <Link href={`/library/${likedPlaylist.id}`}>
+            <Link href="/liked">
               <div className="bg-zinc-800 hover:bg-zinc-700 rounded-xl p-4 transition-colors cursor-pointer">
                 <PlaylistCover thumbs={getTrackThumbnails(likedPlaylist)} isLiked />
                 <p className="text-white text-sm font-semibold truncate">Liked Songs</p>

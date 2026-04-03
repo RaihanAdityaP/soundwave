@@ -27,6 +27,7 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
   const [creatingNew, setCreatingNew] = useState(false)
   const [newName, setNewName] = useState('')
   const [view, setView] = useState<'menu' | 'playlists'>('menu')
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
   const supabase = createClient()
   const router = useRouter()
 
@@ -60,26 +61,47 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
   async function togglePlaylist(playlistId: string) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/auth/login'); return }
-
+    setActionMessage(null)
     setToggling(playlistId)
+    const isRemoving = added.includes(playlistId)
+    
     if (added.includes(playlistId)) {
-      await supabase
-        .from('playlist_tracks')
-        .delete()
-        .eq('playlist_id', playlistId)
-        .eq('track_id', track.id)
+      const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackId: track.id }),
+      })
+      const payload = await res.json()
+      if (!res.ok) {
+        setActionMessage(payload.error ?? 'Failed to remove track.')
+        setToggling(null)
+        return
+      }
       setAdded(prev => prev.filter(id => id !== playlistId))
+      setActionMessage(payload.message ?? 'Track removed from playlist.')
     } else {
-      await supabase.from('playlist_tracks').upsert({
-        playlist_id: playlistId,
-        track_id: track.id,
-        source: track.source,
-        title: track.title,
-        artist: track.artist,
-        thumbnail: track.thumbnail,
-        duration: track.duration,
-      }, { onConflict: 'playlist_id,track_id' })
+      const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(track),
+      })
+      const payload = await res.json()
+      if (!res.ok) {
+        setActionMessage(payload.error ?? 'Failed to add track.')
+        setToggling(null)
+        return
+      }
       setAdded(prev => [...prev, playlistId])
+      setActionMessage(payload.message ?? 'Track added to playlist.')
+      router.refresh()
+    }
+
+    if (likedPlaylist?.id === playlistId) {
+      setActionMessage(
+        isRemoving
+          ? 'Removed from Liked Songs.'
+          : 'Added to Liked Songs.'
+      )
     }
     setToggling(null)
   }
@@ -148,6 +170,10 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
                 {isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs'}
               </span>
             </button>
+
+            {actionMessage && (
+              <p className="px-5 pb-2 text-xs text-green-400">{actionMessage}</p>
+            )}
 
             {/* Add to playlist */}
             <button

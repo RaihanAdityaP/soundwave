@@ -8,6 +8,30 @@ export async function GET(req: NextRequest) {
 
   const includeTracks = req.nextUrl.searchParams.get('include_tracks')
 
+  const { data: likedPlaylist, error: likedError } = await supabase
+    .from('playlists')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('is_liked_songs', true)
+    .maybeSingle()
+
+  if (likedError) return NextResponse.json({ error: likedError.message }, { status: 500 })
+
+  if (!likedPlaylist) {
+    const { error: createLikedError } = await supabase
+      .from('playlists')
+      .insert({
+        user_id: user.id,
+        name: 'Liked Songs',
+        is_liked_songs: true,
+        is_public: false,
+      })
+
+    if (createLikedError) {
+      return NextResponse.json({ error: createLikedError.message }, { status: 500 })
+    }
+  }
+
   // Query playlists dengan count
   const { data: playlists, error } = await supabase
     .from('playlists')
