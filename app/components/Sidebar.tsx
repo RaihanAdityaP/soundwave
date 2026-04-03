@@ -2,11 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Search, Heart, Music2, User } from 'lucide-react'
+import { Home, Search, Heart, Music2, User, Library } from 'lucide-react'
 
 const navItems = [
   { href: '/', label: 'Home', icon: Home },
   { href: '/search', label: 'Search', icon: Search },
+  { href: '/library', label: 'Library', icon: Library },
   { href: '/liked', label: 'Liked Songs', icon: Heart },
 ]
 
@@ -28,7 +29,7 @@ export default function Sidebar() {
               key={href}
               href={href}
               className={`flex items-center gap-4 px-3 py-2 rounded-md font-medium text-sm transition-colors ${
-                pathname === href
+                pathname === href || pathname.startsWith(href + '/')
                   ? 'text-white bg-zinc-800'
                   : 'text-zinc-400 hover:text-white'
               }`}
@@ -60,8 +61,8 @@ export default function Sidebar() {
           <Link
             key={href}
             href={href}
-            className={`flex flex-col items-center gap-1 py-3 px-4 transition-colors ${
-              pathname === href ? 'text-green-400' : 'text-zinc-500'
+            className={`flex flex-col items-center gap-1 py-3 px-3 transition-colors ${
+              pathname === href || pathname.startsWith(href + '/') ? 'text-green-400' : 'text-zinc-500'
             }`}
           >
             <Icon size={22} />
@@ -70,7 +71,7 @@ export default function Sidebar() {
         ))}
         <Link
           href="/profile"
-          className={`flex flex-col items-center gap-1 py-3 px-4 transition-colors ${
+          className={`flex flex-col items-center gap-1 py-3 px-3 transition-colors ${
             pathname === '/profile' ? 'text-green-400' : 'text-zinc-500'
           }`}
         >

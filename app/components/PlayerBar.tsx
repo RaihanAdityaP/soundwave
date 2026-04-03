@@ -35,6 +35,7 @@ export default function PlayerBar() {
   useEffect(() => { playNextRef.current = playNext }, [playNext])
   useEffect(() => { setIsPlayingRef.current = setIsPlaying }, [setIsPlaying])
 
+  // ── YouTube IFrame API ──────────────────────────────────────────────────
   useEffect(() => {
     if ((window as any).YT?.Player) { setYtReady(true); return }
     const tag = document.createElement('script')
@@ -43,6 +44,7 @@ export default function PlayerBar() {
     ;(window as any).onYouTubeIframeAPIReady = () => setYtReady(true)
   }, [])
 
+  // ── Load track ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentTrack) return
 
@@ -68,6 +70,70 @@ export default function PlayerBar() {
     }
   }, [currentTrack?.id])
 
+  // ── Media Session API — background play + lockscreen controls ───────────
+  useEffect(() => {
+    if (!currentTrack || !('mediaSession' in navigator)) return
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.artist ?? '',
+      artwork: currentTrack.thumbnail
+        ? [{ src: currentTrack.thumbnail, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    })
+
+    navigator.mediaSession.setActionHandler('play', () => {
+      ytPlayerRef.current?.playVideo()
+      setIsPlayingRef.current(true)
+    })
+    navigator.mediaSession.setActionHandler('pause', () => {
+      ytPlayerRef.current?.pauseVideo()
+      setIsPlayingRef.current(false)
+    })
+    navigator.mediaSession.setActionHandler('previoustrack', () => {
+    usePlayerStore.getState().playPrev()
+  })
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
+      playNextRef.current()
+    })
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (details.seekTime !== undefined && ytPlayerRef.current?.seekTo) {
+        ytPlayerRef.current.seekTo(details.seekTime, true)
+      }
+    })
+
+    return () => {
+      navigator.mediaSession.setActionHandler('play', null)
+      navigator.mediaSession.setActionHandler('pause', null)
+      navigator.mediaSession.setActionHandler('previoustrack', null)
+      navigator.mediaSession.setActionHandler('nexttrack', null)
+      navigator.mediaSession.setActionHandler('seekto', null)
+    }
+  }, [currentTrack])
+
+  // Update Media Session playback state
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  }, [isPlaying])
+
+  // ── Visibility change — pastikan player tetap jalan di background ───────
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      // Kalau tab jadi visible lagi dan harusnya playing, resume
+      if (!document.hidden && isPlaying && ytPlayerRef.current?.getPlayerState) {
+        const state = ytPlayerRef.current.getPlayerState()
+        // state 2 = paused, 5 = cued
+        if (state === 2 || state === 5) {
+          ytPlayerRef.current.playVideo()
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [isPlaying])
+
+  // ── Init / load YouTube player ──────────────────────────────────────────
   useEffect(() => {
     if (!resolvedId || !ytReady) return
 
@@ -76,7 +142,11 @@ export default function PlayerBar() {
         height: '0',
         width: '0',
         videoId: resolvedId,
-        playerVars: { autoplay: 1 },
+        playerVars: {
+          autoplay: 1,
+          // playsinline penting untuk mobile agar audio jalan di background
+          playsinline: 1,
+        },
         events: {
           onReady: () => {
             setSeekTo((seconds: number) => {
@@ -107,6 +177,7 @@ export default function PlayerBar() {
     if (ytPlayerRef.current?.setVolume) ytPlayerRef.current.setVolume(volume * 100)
   }, [volume])
 
+  // ── Progress interval + Media Session position state ────────────────────
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (!currentTrack) return
@@ -116,7 +187,21 @@ export default function PlayerBar() {
       if (!player?.getCurrentTime) return
       const currentTime = player.getCurrentTime()
       const duration = player.getDuration?.() || currentTrack.duration
-      if (duration > 0) setProgress(currentTime / duration)
+      if (duration > 0) {
+        const progress = currentTime / duration
+        setProgress(progress)
+
+        // Update Media Session position state (biar scrubbar di notifikasi akurat)
+        if ('mediaSession' in navigator && navigator.mediaSession.setPositionState) {
+          try {
+            navigator.mediaSession.setPositionState({
+              duration,
+              playbackRate: 1,
+              position: currentTime,
+            })
+          } catch {}
+        }
+      }
     }, 500)
 
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
@@ -281,11 +366,10 @@ export default function PlayerBar() {
         </div>
       </div>
 
-      {/* Mobile player — sits above bottom nav */}
+      {/* Mobile player */}
       <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 bg-zinc-800/95 backdrop-blur-md border-t border-zinc-700/50 px-3 py-2">
         <div id="yt-player-mobile" className="hidden" />
 
-        {/* Progress bar strip */}
         <div className="relative h-0.5 w-full mb-2 rounded-full overflow-hidden bg-zinc-700">
           <div
             className="absolute inset-y-0 left-0 bg-green-500 rounded-full"
@@ -303,7 +387,6 @@ export default function PlayerBar() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Thumbnail + info */}
           <button
             className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
             onClick={() => setShowFullscreenLyrics(true)}
@@ -319,7 +402,6 @@ export default function PlayerBar() {
             </div>
           </button>
 
-          {/* Controls */}
           <div className="flex items-center gap-1 shrink-0">
             <button onClick={playPrev} className="text-zinc-400 p-2">
               <SkipBack size={18} />

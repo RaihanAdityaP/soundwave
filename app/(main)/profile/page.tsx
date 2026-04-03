@@ -14,10 +14,20 @@ export default async function ProfilePage() {
     .eq('id', user.id)
     .single()
 
-  const { count: likedCount } = await supabase
-    .from('liked_songs')
-    .select('*', { count: 'exact', head: true })
+  // Ambil liked songs count via playlist system
+  const { data: likedPlaylist } = await supabase
+    .from('playlists')
+    .select('id')
     .eq('user_id', user.id)
+    .eq('is_liked_songs', true)
+    .single()
+
+  const { count: likedCount } = likedPlaylist
+    ? await supabase
+        .from('playlist_tracks')
+        .select('*', { count: 'exact', head: true })
+        .eq('playlist_id', likedPlaylist.id)
+    : { count: 0 }
 
   return (
     <ProfileClient
