@@ -5,6 +5,13 @@ import Link from 'next/link'
 import { ListMusic, Heart, Plus, Trash2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
+interface TrackItem {
+  count?: number
+  thumbnail?: string
+  title?: string
+  artist?: string
+}
+
 interface Playlist {
   id: string
   name: string
@@ -12,7 +19,40 @@ interface Playlist {
   is_liked_songs: boolean
   is_public: boolean
   created_at: string
-  playlist_tracks: { count: number }[]
+  playlist_tracks: TrackItem[]
+}
+
+function PlaylistCover({ thumbs, isLiked }: { thumbs: string[], isLiked?: boolean }) {
+  const bg = isLiked ? 'bg-gradient-to-br from-purple-600 to-blue-500' : 'bg-zinc-700'
+  const icon = isLiked
+    ? <Heart size={32} className="text-white fill-white" />
+    : <ListMusic size={32} className="text-white opacity-80" />
+
+  if (thumbs.length === 0) {
+    return (
+      <div className={`w-full aspect-square rounded-lg mb-3 ${bg} flex items-center justify-center`}>
+        {icon}
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full aspect-square rounded-lg mb-3 overflow-hidden relative">
+      <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
+        {[0, 1, 2, 3].map(i => (
+          thumbs[i] ? (
+            <img key={i} src={thumbs[i]} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div key={i} className={`w-full h-full ${bg} flex items-center justify-center`}>
+              {isLiked
+                ? <Heart size={14} className="text-white/40" />
+                : <ListMusic size={14} className="text-white/40" />}
+            </div>
+          )
+        ))}
+      </div>
+    </div>
+  )
 }
 
 export default function LibraryPage() {
@@ -25,7 +65,7 @@ export default function LibraryPage() {
   const router = useRouter()
 
   async function load() {
-    const res = await fetch('/api/playlists')
+    const res = await fetch('/api/playlists?include_tracks=4')
     if (res.status === 401) { router.push('/auth/login'); return }
     const data = await res.json()
     setPlaylists(Array.isArray(data) ? data : [])
@@ -42,10 +82,7 @@ export default function LibraryPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, description: desc }),
     })
-    setName('')
-    setDesc('')
-    setShowForm(false)
-    setCreating(false)
+    setName(''); setDesc(''); setShowForm(false); setCreating(false)
     load()
   }
 
@@ -54,9 +91,18 @@ export default function LibraryPage() {
     setPlaylists(prev => prev.filter(p => p.id !== id))
   }
 
-  const trackCount = (p: Playlist) => p.playlist_tracks?.[0]?.count ?? 0
+  const trackCount = (p: Playlist) => {
+    const first = p.playlist_tracks?.[0]
+    if (!first) return 0
+    // Supabase count returns { count: n }
+    return typeof first.count === 'number' ? first.count : 0
+  }
 
-  // Pisah liked songs dari playlist biasa biar selalu muncul di atas
+  const getTrackThumbnails = (p: Playlist): string[] => {
+    // Slice dari index 1 karena index 0 adalah count object
+    return p.playlist_tracks?.slice(1, 5).map(pt => pt.thumbnail).filter((t): t is string => !!t) ?? []
+  }
+
   const likedPlaylist = playlists.find(p => p.is_liked_songs)
   const regularPlaylists = playlists.filter(p => !p.is_liked_songs)
 
@@ -76,7 +122,6 @@ export default function LibraryPage() {
         </button>
       </div>
 
-      {/* Create form */}
       {showForm && (
         <div className="bg-zinc-800 rounded-xl p-4 space-y-3">
           <input
@@ -94,17 +139,8 @@ export default function LibraryPage() {
             className="w-full bg-zinc-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 placeholder-zinc-500"
           />
           <div className="flex gap-2 justify-end">
-            <button
-              onClick={() => { setShowForm(false); setName(''); setDesc('') }}
-              className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={createPlaylist}
-              disabled={!name.trim() || creating}
-              className="px-4 py-2 text-sm bg-green-500 hover:bg-green-400 disabled:opacity-40 text-black font-semibold rounded-full transition-colors"
-            >
+            <button onClick={() => { setShowForm(false); setName(''); setDesc('') }} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
+            <button onClick={createPlaylist} disabled={!name.trim() || creating} className="px-4 py-2 text-sm bg-green-500 hover:bg-green-400 disabled:opacity-40 text-black font-semibold rounded-full transition-colors">
               {creating ? 'Creating...' : 'Create'}
             </button>
           </div>
@@ -115,32 +151,25 @@ export default function LibraryPage() {
         <p className="text-zinc-400 text-sm">Loading...</p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
-          {/* Liked Songs selalu pertama */}
           {likedPlaylist && (
             <Link href={`/library/${likedPlaylist.id}`}>
               <div className="bg-zinc-800 hover:bg-zinc-700 rounded-xl p-4 transition-colors cursor-pointer">
-                <div className="w-full aspect-square rounded-lg mb-3 flex items-center justify-center bg-linear-to-br from-purple-600 to-blue-500">
-                  <Heart size={32} className="text-white fill-white" />
-                </div>
+                <PlaylistCover thumbs={getTrackThumbnails(likedPlaylist)} isLiked />
                 <p className="text-white text-sm font-semibold truncate">Liked Songs</p>
                 <p className="text-zinc-400 text-xs mt-0.5">{trackCount(likedPlaylist)} songs</p>
               </div>
             </Link>
           )}
 
-          {/* Playlist biasa */}
           {regularPlaylists.map(playlist => (
             <div key={playlist.id} className="group relative">
               <Link href={`/library/${playlist.id}`}>
                 <div className="bg-zinc-800 hover:bg-zinc-700 rounded-xl p-4 transition-colors cursor-pointer">
-                  <div className="w-full aspect-square rounded-lg mb-3 flex items-center justify-center bg-zinc-700">
-                    <ListMusic size={32} className="text-white opacity-80" />
-                  </div>
+                  <PlaylistCover thumbs={getTrackThumbnails(playlist)} />
                   <p className="text-white text-sm font-semibold truncate">{playlist.name}</p>
                   <p className="text-zinc-400 text-xs mt-0.5">{trackCount(playlist)} songs</p>
                 </div>
               </Link>
-
               <button
                 onClick={() => deletePlaylist(playlist.id)}
                 className="absolute top-2 right-2 p-1.5 bg-zinc-900/80 rounded-full text-zinc-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"

@@ -8,7 +8,6 @@ const navItems = [
   { href: '/', label: 'Home', icon: Home },
   { href: '/search', label: 'Search', icon: Search },
   { href: '/library', label: 'Library', icon: Library },
-  { href: '/liked', label: 'Liked Songs', icon: Heart },
 ]
 
 export default function Sidebar() {
