@@ -13,20 +13,21 @@ export default function RegisterPage() {
   const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    const formData = new FormData(e.currentTarget)
-    setEmail(formData.get('email') as string)
-    const result = await register(formData)
-    if (result?.error) {
-      setError(result.error)
-      setLoading(false)
-    } else {
-      setRegistered(true)
-      setLoading(false)
-    }
+  e.preventDefault()
+  setLoading(true)
+  setError('')
+  const formData = new FormData(e.currentTarget)
+  setEmail(formData.get('email') as string)
+  const result = await register(formData)
+  console.log('register result:', result) // ← tambah ini
+  if (result?.error) {
+    setError(result.error)
+    setLoading(false)
+  } else {
+    setRegistered(true)
+    setLoading(false)
   }
+}
 
   async function handleResend() {
     setResendStatus('sending')

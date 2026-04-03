@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { User, Heart, LogOut, Pencil, Check, X } from 'lucide-react'
-import { updateProfile, logout } from '../auth/actions'
+import { updateProfile, logout } from '../../auth/actions'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
 
 interface Props {
