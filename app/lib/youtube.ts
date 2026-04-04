@@ -1,8 +1,7 @@
 import { Track } from '@/types'
 
-const YT_API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY
+const YT_API_KEY = process.env.YOUTUBE_API_KEY
 
-// List of public Invidious instances to try in order
 const INVIDIOUS_INSTANCES = [
   process.env.NEXT_PUBLIC_INVIDIOUS_URL || 'https://invidious.io.lol',
   'https://inv.nadeko.net',
@@ -13,9 +12,11 @@ const INVIDIOUS_INSTANCES = [
 function parseDuration(iso: string): number {
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
   if (!match) return 0
-  return (parseInt(match[1] || '0') * 3600) +
-         (parseInt(match[2] || '0') * 60) +
-         parseInt(match[3] || '0')
+  return (
+    (parseInt(match[1] || '0') * 3600) +
+    (parseInt(match[2] || '0') * 60) +
+    parseInt(match[3] || '0')
+  )
 }
 
 export async function searchYouTube(query: string): Promise<Track[]> {
@@ -39,7 +40,9 @@ export async function searchYouTube(query: string): Promise<Track[]> {
       source: 'youtube',
       title: item.snippet.title,
       artist: item.snippet.channelTitle,
-      thumbnail: item.snippet.thumbnails.medium?.url || item.snippet.thumbnails.default?.url,
+      thumbnail:
+        item.snippet.thumbnails.medium?.url ||
+        item.snippet.thumbnails.default?.url,
       duration: parseDuration(item.contentDetails.duration),
       url: item.id,
     }))
