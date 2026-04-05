@@ -33,7 +33,6 @@ export async function register(formData: FormData) {
 
   if (error) return { error: error.message }
 
-  // Don't redirect — return success so the client can show the verification notice
   return { success: true }
 }
 
