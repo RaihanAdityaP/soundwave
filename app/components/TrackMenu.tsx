@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Heart, ListPlus, X, Check, Trash2 } from 'lucide-react'
+import { Heart, ListPlus, X, Check, Trash2, Gamepad2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Track } from '@/types'
 import { createClient } from '@/lib/supabase/client'
@@ -16,10 +16,11 @@ interface Playlist {
 interface Props {
   track: Track
   onClose: () => void
-  onRemove?: () => void // kalau dipanggil dari halaman playlist
+  onRemove?: () => void
+  onPlayRhythm?: () => void
 }
 
-export default function TrackMenu({ track, onClose, onRemove }: Props) {
+export default function TrackMenu({ track, onClose, onRemove, onPlayRhythm }: Props) {
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [loading, setLoading] = useState(true)
   const [added, setAdded] = useState<string[]>([])
@@ -30,6 +31,12 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const supabase = createClient()
   const router = useRouter()
+
+  // Lock body scroll while menu is open
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -64,21 +71,17 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
     setActionMessage(null)
     setToggling(playlistId)
     const isRemoving = added.includes(playlistId)
-    
-    if (added.includes(playlistId)) {
+
+    if (isRemoving) {
       const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trackId: track.id }),
       })
       const payload = await res.json()
-      if (!res.ok) {
-        setActionMessage(payload.error ?? 'Failed to remove track.')
-        setToggling(null)
-        return
-      }
+      if (!res.ok) { setActionMessage(payload.error ?? 'Failed to remove track.'); setToggling(null); return }
       setAdded(prev => prev.filter(id => id !== playlistId))
-      setActionMessage(payload.message ?? 'Track removed from playlist.')
+      setActionMessage(payload.message ?? 'Removed from playlist.')
     } else {
       const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
         method: 'POST',
@@ -86,22 +89,14 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
         body: JSON.stringify(track),
       })
       const payload = await res.json()
-      if (!res.ok) {
-        setActionMessage(payload.error ?? 'Failed to add track.')
-        setToggling(null)
-        return
-      }
+      if (!res.ok) { setActionMessage(payload.error ?? 'Failed to add track.'); setToggling(null); return }
       setAdded(prev => [...prev, playlistId])
-      setActionMessage(payload.message ?? 'Track added to playlist.')
+      setActionMessage(payload.message ?? 'Added to playlist.')
       router.refresh()
     }
 
     if (likedPlaylist?.id === playlistId) {
-      setActionMessage(
-        isRemoving
-          ? 'Removed from Liked Songs.'
-          : 'Added to Liked Songs.'
-      )
+      setActionMessage(isRemoving ? 'Removed from Liked Songs.' : 'Added to Liked Songs.')
     }
     setToggling(null)
   }
@@ -130,16 +125,27 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
   const isLiked = likedPlaylist ? added.includes(likedPlaylist.id) : false
 
   return (
+    // z-[110] → di atas mobile nav (z-40) dan player bar (z-30)
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-110 flex items-end justify-center bg-black/60 backdrop-blur-sm"
       onClick={onClose}
+      style={{ touchAction: 'none' }}
     >
       <div
-        className="w-full max-w-lg bg-zinc-900 rounded-t-2xl overflow-hidden"
+        className="w-full max-w-lg bg-zinc-900 rounded-t-2xl flex flex-col"
+        style={{
+          maxHeight: '85dvh',
+          paddingBottom: 'env(safe-area-inset-bottom, 8px)',
+        }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Track info */}
-        <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-zinc-800">
+        {/* Handle bar */}
+        <div className="flex justify-center pt-3 pb-1 shrink-0">
+          <div className="w-10 h-1 rounded-full bg-zinc-700" />
+        </div>
+
+        {/* Track info — pinned, tidak scroll */}
+        <div className="flex items-center gap-3 px-5 pt-3 pb-4 border-b border-zinc-800 shrink-0">
           <img
             src={track.thumbnail}
             alt=""
@@ -149,126 +155,169 @@ export default function TrackMenu({ track, onClose, onRemove }: Props) {
             <p className="text-white font-semibold text-sm truncate">{track.title}</p>
             <p className="text-zinc-400 text-xs truncate">{track.artist}</p>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-white shrink-0">
+          {/* Touch target 44×44 */}
+          <button
+            onClick={onClose}
+            className="flex items-center justify-center text-zinc-500 active:text-white shrink-0 rounded-full"
+            style={{ width: 44, height: 44, touchAction: 'manipulation' }}
+          >
             <X size={20} />
           </button>
         </div>
 
-        {view === 'menu' ? (
-          <div className="py-2">
-            {/* Like */}
-            <button
-              onClick={() => likedPlaylist && togglePlaylist(likedPlaylist.id)}
-              disabled={!likedPlaylist || toggling === likedPlaylist?.id}
-              className="w-full flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-800 transition-colors text-left"
-            >
-              <Heart
-                size={22}
-                className={isLiked ? 'text-green-500 fill-green-500' : 'text-zinc-300'}
-              />
-              <span className="text-white text-sm">
-                {isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs'}
-              </span>
-            </button>
+        {/* Scrollable body */}
+        <div
+          className="overflow-y-auto overscroll-contain"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
+          {view === 'menu' ? (
+            <div className="py-2">
 
-            {actionMessage && (
-              <p className="px-5 pb-2 text-xs text-green-400">{actionMessage}</p>
-            )}
-
-            {/* Add to playlist */}
-            <button
-              onClick={() => setView('playlists')}
-              className="w-full flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-800 transition-colors text-left"
-            >
-              <ListPlus size={22} className="text-zinc-300" />
-              <span className="text-white text-sm">Add to playlist</span>
-            </button>
-
-            {/* Remove from playlist (opsional, dari halaman detail playlist) */}
-            {onRemove && (
-              <button
-                onClick={() => { onRemove(); onClose() }}
-                className="w-full flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-800 transition-colors text-left"
-              >
-                <Trash2 size={22} className="text-red-400" />
-                <span className="text-red-400 text-sm">Remove from this playlist</span>
-              </button>
-            )}
-          </div>
-        ) : (
-          /* Playlist picker */
-          <div>
-            <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800">
-              <button
-                onClick={() => setView('menu')}
-                className="text-zinc-400 hover:text-white text-sm"
-              >
-                ← Back
-              </button>
-              <span className="text-white font-semibold text-sm">Add to playlist</span>
-            </div>
-
-            {/* Create new */}
-            <div className="px-5 py-3 border-b border-zinc-800/50">
-              <div className="flex gap-2">
-                <input
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && createAndAdd()}
-                  placeholder="New playlist name..."
-                  className="flex-1 bg-zinc-800 text-white text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-green-500 placeholder-zinc-500"
-                />
+              {/* Rhythm Game */}
+              {onPlayRhythm && (
                 <button
-                  onClick={createAndAdd}
-                  disabled={!newName.trim() || creatingNew}
-                  className="px-3 py-2 bg-green-500 hover:bg-green-400 disabled:opacity-40 text-black text-sm font-semibold rounded-lg transition-colors"
+                  onClick={() => { onClose(); onPlayRhythm() }}
+                  className="w-full flex items-center gap-4 px-5 active:bg-zinc-800 transition-colors text-left"
+                  style={{ minHeight: 56, touchAction: 'manipulation' }}
                 >
-                  {creatingNew ? '...' : 'Create'}
+                  <Gamepad2 size={22} className="text-green-500 shrink-0" />
+                  <div>
+                    <span className="text-white text-sm block">Play Rhythm Game</span>
+                    <span className="text-zinc-500 text-xs">Tap to the beat</span>
+                  </div>
                 </button>
-              </div>
-            </div>
+              )}
 
-            <div className="max-h-72 overflow-y-auto pb-4">
-              {loading ? (
-                <p className="text-zinc-500 text-sm text-center py-6">Loading...</p>
-              ) : (
-                playlists.map(playlist => {
-                  const isAdded = added.includes(playlist.id)
-                  const isToggling = toggling === playlist.id
-                  return (
-                    <button
-                      key={playlist.id}
-                      onClick={() => togglePlaylist(playlist.id)}
-                      disabled={isToggling}
-                      className="w-full flex items-center gap-3 px-5 py-3 hover:bg-zinc-800 transition-colors text-left"
-                    >
-                      <div className={`w-10 h-10 rounded flex items-center justify-center shrink-0 ${
-                        playlist.is_liked_songs
-                          ? 'bg-linear-to-br from-purple-600 to-blue-500'
-                          : 'bg-zinc-700'
-                      }`}>
-                        {playlist.is_liked_songs
-                          ? <Heart size={14} className="text-white fill-white" />
-                          : <span className="text-zinc-400 text-xs font-bold">
-                              {playlist.name.slice(0, 2).toUpperCase()}
-                            </span>
-                        }
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm truncate">{playlist.name}</p>
-                      </div>
-                      {isToggling ? (
-                        <span className="w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin shrink-0" />
-                      ) : isAdded ? (
-                        <Check size={18} className="text-green-500 shrink-0" />
-                      ) : null}
-                    </button>
-                  )
-                })
+              {/* Like */}
+              <button
+                onClick={() => likedPlaylist && togglePlaylist(likedPlaylist.id)}
+                disabled={!likedPlaylist || toggling === likedPlaylist?.id}
+                className="w-full flex items-center gap-4 px-5 active:bg-zinc-800 transition-colors text-left disabled:opacity-50"
+                style={{ minHeight: 56, touchAction: 'manipulation' }}
+              >
+                <Heart
+                  size={22}
+                  className={`shrink-0 ${isLiked ? 'text-green-500 fill-green-500' : 'text-zinc-300'}`}
+                />
+                <span className="text-white text-sm">
+                  {isLiked ? 'Remove from Liked Songs' : 'Save to Liked Songs'}
+                </span>
+                {toggling === likedPlaylist?.id && (
+                  <span className="ml-auto w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                )}
+              </button>
+
+              {actionMessage && (
+                <p className="px-5 pb-1 text-xs text-green-400">{actionMessage}</p>
+              )}
+
+              {/* Add to playlist */}
+              <button
+                onClick={() => setView('playlists')}
+                className="w-full flex items-center gap-4 px-5 active:bg-zinc-800 transition-colors text-left"
+                style={{ minHeight: 56, touchAction: 'manipulation' }}
+              >
+                <ListPlus size={22} className="text-zinc-300 shrink-0" />
+                <span className="text-white text-sm">Add to playlist</span>
+              </button>
+
+              {/* Remove from playlist */}
+              {onRemove && (
+                <button
+                  onClick={() => { onRemove(); onClose() }}
+                  className="w-full flex items-center gap-4 px-5 active:bg-zinc-800 transition-colors text-left"
+                  style={{ minHeight: 56, touchAction: 'manipulation' }}
+                >
+                  <Trash2 size={22} className="text-red-400 shrink-0" />
+                  <span className="text-red-400 text-sm">Remove from this playlist</span>
+                </button>
               )}
             </div>
-          </div>
-        )}
+
+          ) : (
+            /* Playlist picker */
+            <div>
+              <div
+                className="flex items-center gap-3 px-5 border-b border-zinc-800"
+                style={{ minHeight: 48 }}
+              >
+                <button
+                  onClick={() => setView('menu')}
+                  className="text-zinc-400 active:text-white text-sm py-3 pr-3"
+                  style={{ touchAction: 'manipulation' }}
+                >
+                  ← Back
+                </button>
+                <span className="text-white font-semibold text-sm">Add to playlist</span>
+              </div>
+
+              {/* Create new */}
+              <div className="px-5 py-3 border-b border-zinc-800/50">
+                <div className="flex gap-2">
+                  <input
+                    value={newName}
+                    onChange={e => setNewName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && createAndAdd()}
+                    placeholder="New playlist name..."
+                    className="flex-1 bg-zinc-800 text-white rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-green-500 placeholder-zinc-500"
+                    // font-size 16px → cegah iOS auto-zoom saat input focus
+                    style={{ fontSize: 16 }}
+                  />
+                  <button
+                    onClick={createAndAdd}
+                    disabled={!newName.trim() || creatingNew}
+                    className="px-3 py-2 bg-green-500 active:bg-green-400 disabled:opacity-40 text-black text-sm font-semibold rounded-lg transition-colors"
+                    style={{ touchAction: 'manipulation' }}
+                  >
+                    {creatingNew ? '...' : 'Create'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Playlist list */}
+              <div>
+                {loading ? (
+                  <p className="text-zinc-500 text-sm text-center py-6">Loading...</p>
+                ) : (
+                  playlists.map(playlist => {
+                    const isAdded = added.includes(playlist.id)
+                    const isToggling = toggling === playlist.id
+                    return (
+                      <button
+                        key={playlist.id}
+                        onClick={() => togglePlaylist(playlist.id)}
+                        disabled={isToggling}
+                        className="w-full flex items-center gap-3 px-5 active:bg-zinc-800 transition-colors text-left disabled:opacity-50"
+                        style={{ minHeight: 56, touchAction: 'manipulation' }}
+                      >
+                        <div className={`w-10 h-10 rounded flex items-center justify-center shrink-0 ${
+                          playlist.is_liked_songs
+                            ? 'bg-linear-to-br from-purple-600 to-blue-500'
+                            : 'bg-zinc-700'
+                        }`}>
+                          {playlist.is_liked_songs
+                            ? <Heart size={14} className="text-white fill-white" />
+                            : <span className="text-zinc-400 text-xs font-bold">
+                                {playlist.name.slice(0, 2).toUpperCase()}
+                              </span>
+                          }
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm truncate">{playlist.name}</p>
+                        </div>
+                        {isToggling ? (
+                          <span className="w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                        ) : isAdded ? (
+                          <Check size={18} className="text-green-500 shrink-0" />
+                        ) : null}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

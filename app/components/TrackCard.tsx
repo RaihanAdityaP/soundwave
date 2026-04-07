@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { Track } from '@/types'
 import { usePlayerStore } from '@/store/playerStore'
 import TrackMenu from './TrackMenu'
+import RhythmGame from './RhythmGame'
 
 function formatDuration(seconds: number) {
   const m = Math.floor(seconds / 60)
@@ -23,6 +24,7 @@ interface Props {
 export default function TrackCard({ track, trackList, trackIndex, onRemove }: Props) {
   const { setQueue, currentTrack, isPlaying } = usePlayerStore()
   const [showMenu, setShowMenu] = useState(false)
+  const [showRhythm, setShowRhythm] = useState(false)
   const isCurrentlyPlaying = currentTrack?.id === track.id && isPlaying
 
   const handlePlay = () => {
@@ -33,6 +35,18 @@ export default function TrackCard({ track, trackList, trackIndex, onRemove }: Pr
     }
   }
 
+  const handlePlayRhythm = () => {
+    // Make sure this track is playing first
+    if (currentTrack?.id !== track.id) {
+      if (trackList && trackIndex !== undefined) {
+        setQueue(trackList, trackIndex)
+      } else {
+        setQueue([track], 0)
+      }
+    }
+    setShowRhythm(true)
+  }
+
   return (
     <>
       {showMenu && (
@@ -40,7 +54,12 @@ export default function TrackCard({ track, trackList, trackIndex, onRemove }: Pr
           track={track}
           onClose={() => setShowMenu(false)}
           onRemove={onRemove}
+          onPlayRhythm={handlePlayRhythm}
         />
+      )}
+
+      {showRhythm && (
+        <RhythmGame onClose={() => setShowRhythm(false)} />
       )}
 
       <div
@@ -95,10 +114,11 @@ export default function TrackCard({ track, trackList, trackIndex, onRemove }: Pr
           {formatDuration(track.duration)}
         </span>
 
-        {/* ⋯ menu button */}
+        {/* ⋯ menu button — always visible on mobile, hover-only on desktop */}
         <button
           onClick={e => { e.stopPropagation(); setShowMenu(true) }}
-          className="p-1.5 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-700 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+          className="p-2 rounded-full text-zinc-500 hover:text-white hover:bg-zinc-700 transition-colors shrink-0 md:opacity-0 md:group-hover:opacity-100 touch-manipulation"
+          style={{ minWidth: 36, minHeight: 36 }}
         >
           <MoreHorizontal size={17} />
         </button>

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Music2 } from 'lucide-react'
+import { Music2, Eye, EyeOff } from 'lucide-react'
 import { login, resendVerification } from '../actions'
 
 export default function LoginPage() {
@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [showResend, setShowResend] = useState(false)
   const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [showPassword, setShowPassword] = useState(false)
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -21,7 +22,6 @@ export default function LoginPage() {
     const result = await login(formData)
     if (result?.error) {
       setError(result.error)
-      // Kalau errornya soal email belum dikonfirmasi, tampilkan opsi resend
       if (result.error.toLowerCase().includes('email') && result.error.toLowerCase().includes('confirm')) {
         setShowResend(true)
       }
@@ -30,9 +30,13 @@ export default function LoginPage() {
   }
 
   async function handleResend() {
-    if (!email) return
+    const emailToSend = email.trim()
+    if (!emailToSend) {
+      setResendStatus('error')
+      return
+    }
     setResendStatus('sending')
-    const result = await resendVerification(email)
+    const result = await resendVerification(emailToSend)
     if (result?.error) {
       setResendStatus('error')
     } else {
@@ -65,7 +69,8 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-zinc-800 text-white rounded-lg px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-green-500 transition-all"
+              className="w-full bg-zinc-800 text-white rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-green-500 transition-all"
+              style={{ fontSize: 16 }}
               placeholder="you@example.com"
             />
           </div>
@@ -74,13 +79,28 @@ export default function LoginPage() {
             <label className="text-zinc-400 text-xs uppercase tracking-widest block mb-2">
               Password
             </label>
-            <input
-              name="password"
-              type="password"
-              required
-              className="w-full bg-zinc-800 text-white rounded-lg px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-green-500 transition-all"
-              placeholder="••••••••"
-            />
+            <div className="relative flex items-center">
+              <input
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                className="w-full bg-zinc-800 text-white rounded-lg px-4 py-3 pr-12 outline-none focus:ring-2 focus:ring-green-500 transition-all"
+                style={{ fontSize: 16 }}
+                placeholder="••••••••"
+              />
+              {/* 
+              */}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 flex items-center justify-center w-8 h-8 text-zinc-400 hover:text-white transition-colors rounded"
+                tabIndex={-1}
+                aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -93,19 +113,19 @@ export default function LoginPage() {
               <p className="text-zinc-400 text-xs">
                 Email kamu belum diverifikasi. Kirim ulang link verifikasi?
               </p>
-
               {resendStatus === 'sent' && (
                 <p className="text-green-400 text-xs">✓ Link verifikasi berhasil dikirim!</p>
               )}
               {resendStatus === 'error' && (
-                <p className="text-red-400 text-xs">Gagal mengirim. Coba beberapa saat lagi.</p>
+                <p className="text-red-400 text-xs">
+                  {!email.trim() ? 'Isi email dulu ya.' : 'Gagal mengirim. Coba beberapa saat lagi.'}
+                </p>
               )}
-
               <button
                 type="button"
                 onClick={handleResend}
                 disabled={resendStatus === 'sending' || resendStatus === 'sent'}
-                className="text-xs text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors underline underline-offset-2"
+                className="text-xs text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors underline underline-offset-2 py-1"
               >
                 {resendStatus === 'sending' ? 'Mengirim...' : 'Kirim Ulang Email Verifikasi'}
               </button>
@@ -129,12 +149,17 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* Resend tanpa perlu login dulu */}
+          {/* 
+            Tombol ini SENGAJA di luar <form> supaya tidak ada risiko trigger submit.
+            Ini root cause kenapa sebelumnya "ga bisa dipencet" — button di dalam form
+            tanpa type="button" = submit by default.
+          */}
           {!showResend && (
             <button
               type="button"
               onClick={() => setShowResend(true)}
-              className="text-zinc-600 hover:text-zinc-400 text-xs transition-colors"
+              className="text-zinc-500 hover:text-zinc-300 text-xs transition-colors py-2 px-4"
+              style={{ minHeight: 44 }}
             >
               Belum menerima email verifikasi?
             </button>
