@@ -18,6 +18,7 @@ export async function searchDeezer(query: string): Promise<Track[]> {
       duration: item.duration,
       url: undefined,
       youtubeQuery: `${item.title} ${item.artist.name}`,
+      bpm: item.bpm && item.bpm > 0 ? Math.round(item.bpm) : undefined,
     }))
   } catch (err) {
     console.error('[deezer] fetch failed:', err)

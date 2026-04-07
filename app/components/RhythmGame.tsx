@@ -12,7 +12,7 @@ type CircleNote = {
   x: number
   y: number
   spawnTime: number
-  hitWindow: number // ms after spawnTime when it should be hit
+  hitWindow: number
   hit: boolean
   missed: boolean
 }
@@ -20,7 +20,7 @@ type CircleNote = {
 type LaneNote = {
   id: number
   lane: 0 | 1 | 2 | 3
-  y: number // 0 = top, 1 = bottom (hit zone)
+  y: number
   spawnTime: number
   hit: boolean
   missed: boolean
@@ -45,12 +45,15 @@ type GameState = 'idle' | 'countdown' | 'playing' | 'paused' | 'result'
 
 const LANE_KEYS = ['d', 'f', 'j', 'k']
 const LANE_LABELS = ['D', 'F', 'J', 'K']
-const CIRCLE_HIT_WINDOW = 400 // ms
-const LANE_TRAVEL_TIME = 1200 // ms for note to travel from top to hit zone
+const CIRCLE_HIT_WINDOW = 400
+const LANE_TRAVEL_TIME = 1200
 const PERFECT_THRESHOLD = 80
 const GOOD_THRESHOLD = 200
 const EFFECT_DURATION = 600
-const GAME_DURATION = 60 // seconds
+const GAME_DURATION = 60
+const DEFAULT_BPM = 128
+const MIN_BPM = 60
+const MAX_BPM = 200
 
 function getRating(accuracy: number) {
   if (accuracy >= 95) return { label: 'S', color: '#22c55e' }
@@ -61,14 +64,19 @@ function getRating(accuracy: number) {
 }
 
 // ── Beat generator ────────────────────────────────────────────────────────────
+// Uses actual BPM from track metadata (Deezer), fallback to DEFAULT_BPM.
+// Clamps to MIN/MAX to avoid notes being too slow or impossibly fast.
 
-function generateBeats(durationSec: number, bpm = 128): number[] {
+function generateBeats(durationSec: number, bpm: number): number[] {
+  const safeBpm = Math.min(MAX_BPM, Math.max(MIN_BPM, bpm))
+  const interval = 60000 / safeBpm
   const beats: number[] = []
-  const interval = 60000 / bpm
-  // every beat + every half-beat occasionally
+
   for (let t = 1000; t < durationSec * 1000; t += interval) {
     beats.push(t)
-    if (Math.random() > 0.4) beats.push(t + interval / 2)
+    // Add half-beat subdivisions — more at higher BPM to keep density reasonable
+    const halfBeatChance = safeBpm > 140 ? 0.25 : 0.4
+    if (Math.random() > (1 - halfBeatChance)) beats.push(t + interval / 2)
   }
   return beats.sort((a, b) => a - b)
 }
@@ -86,6 +94,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const [hitNotes, setHitNotes] = useState(0)
   const [perfectHits, setPerfectHits] = useState(0)
   const [mounted, setMounted] = useState(false)
+  const [gameBpm, setGameBpm] = useState<number>(DEFAULT_BPM)
 
   // ── Notes ───────────────────────────────────────────────────────────────
   const [circleNotes, setCircleNotes] = useState<CircleNote[]>([])
@@ -107,19 +116,14 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const perfectHitsRef = useRef(0)
   const totalNotesRef = useRef(0)
 
-  // ── Mount animation ─────────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 30)
     return () => clearTimeout(t)
   }, [])
 
-  // ── Keyboard close ──────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        stopGame()
-        onClose()
-      }
+      if (e.key === 'Escape') { stopGame(); onClose() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -127,6 +131,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
 
   // ── Start countdown ─────────────────────────────────────────────────────
   const startGame = useCallback(() => {
+    // Pick BPM: use track's BPM if available, otherwise default
+    const bpm = currentTrack?.bpm && currentTrack.bpm > 0 ? currentTrack.bpm : DEFAULT_BPM
+    const safeBpm = Math.min(MAX_BPM, Math.max(MIN_BPM, bpm))
+    setGameBpm(safeBpm)
+
     setGameState('countdown')
     setCountdown(3)
     setScore(0)
@@ -153,13 +162,13 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       setCountdown(c)
       if (c <= 0) {
         clearInterval(interval)
-        beginPlaying()
+        beginPlaying(safeBpm)
       }
     }, 1000)
-  }, [])
+  }, [currentTrack])
 
-  const beginPlaying = useCallback(() => {
-    beatsRef.current = generateBeats(GAME_DURATION)
+  const beginPlaying = useCallback((bpm: number) => {
+    beatsRef.current = generateBeats(GAME_DURATION, bpm)
     gameStartTimeRef.current = performance.now()
     setGameState('playing')
     rafRef.current = requestAnimationFrame(gameLoop)
@@ -179,7 +188,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       return
     }
 
-    // Spawn notes from beats
     while (
       nextBeatIdxRef.current < beatsRef.current.length &&
       beatsRef.current[nextBeatIdxRef.current] <= elapsed + LANE_TRAVEL_TIME
@@ -192,11 +200,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       if (isLane) {
         const lane = Math.floor(Math.random() * 4) as 0 | 1 | 2 | 3
         setLaneNotes(prev => [...prev, {
-          id, lane,
-          y: 0,
-          spawnTime: beatTime,
-          hit: false,
-          missed: false,
+          id, lane, y: 0, spawnTime: beatTime, hit: false, missed: false,
         }])
       } else {
         const area = gameAreaRef.current
@@ -215,7 +219,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       nextBeatIdxRef.current++
     }
 
-    // Update note positions & check misses
     setCircleNotes(prev => prev.map(n => {
       if (n.hit) return n
       const age = elapsed - n.spawnTime
@@ -228,22 +231,16 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       const age = elapsed - n.spawnTime
       const progress = Math.min(age / LANE_TRAVEL_TIME, 1)
       if (age > LANE_TRAVEL_TIME + GOOD_THRESHOLD) {
-        // missed
         comboRef.current = 0
         setCombo(0)
-        totalNotesRef.current = totalNotesRef.current // already counted
         return { ...n, missed: true, y: 1 }
       }
       return { ...n, y: progress }
     }).filter(n => {
-      if (n.missed) {
-        const age = elapsed - n.spawnTime
-        return age < LANE_TRAVEL_TIME + 800
-      }
+      if (n.missed) return elapsed - n.spawnTime < LANE_TRAVEL_TIME + 800
       return true
     }))
 
-    // Cleanup old effects
     setHitEffects(prev => prev.filter(e => elapsed - e.createdAt < EFFECT_DURATION))
     setLaneEffects(prev => prev.filter(e => elapsed - e.createdAt < EFFECT_DURATION))
 
@@ -269,26 +266,16 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       setMaxCombo(prev => Math.max(prev, comboRef.current))
       hitNotesRef.current++
       setHitNotes(hitNotesRef.current)
-      if (type === 'perfect') {
-        perfectHitsRef.current++
-        setPerfectHits(perfectHitsRef.current)
-      }
+      if (type === 'perfect') { perfectHitsRef.current++; setPerfectHits(perfectHitsRef.current) }
     } else {
-      comboRef.current = 0
-      setCombo(0)
+      comboRef.current = 0; setCombo(0)
     }
 
     const bonus = Math.floor(pts * (1 + comboRef.current * 0.1))
     scoreRef.current += bonus
     setScore(scoreRef.current)
-
     setCircleNotes(prev => prev.map(n => n.id === note.id ? { ...n, hit: true } : n))
-    setHitEffects(prev => [...prev, {
-      id: Date.now(),
-      x: note.x, y: note.y,
-      type,
-      createdAt: elapsed,
-    }])
+    setHitEffects(prev => [...prev, { id: Date.now(), x: note.x, y: note.y, type, createdAt: elapsed }])
   }, [])
 
   // ── Lane key press ──────────────────────────────────────────────────────
@@ -300,32 +287,18 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       if (laneIdx === -1) return
       e.preventDefault()
 
-      setPressedLanes(prev => {
-        const next = [...prev]
-        next[laneIdx] = true
-        return next
-      })
+      setPressedLanes(prev => { const next = [...prev]; next[laneIdx] = true; return next })
 
       const elapsed = performance.now() - gameStartTimeRef.current
 
       setLaneNotes(prev => {
-        // Find closest note in this lane near hit zone
-        const candidates = prev.filter(n =>
-          !n.hit && !n.missed && n.lane === laneIdx &&
-          n.y > 0.6
-        )
+        const candidates = prev.filter(n => !n.hit && !n.missed && n.lane === laneIdx && n.y > 0.6)
         if (candidates.length === 0) {
-          // miss press
-          setLaneEffects(e2 => [...e2, {
-            id: Date.now(), lane: laneIdx as 0|1|2|3,
-            type: 'miss', createdAt: elapsed,
-          }])
-          comboRef.current = 0
-          setCombo(0)
+          setLaneEffects(e2 => [...e2, { id: Date.now(), lane: laneIdx as 0|1|2|3, type: 'miss', createdAt: elapsed }])
+          comboRef.current = 0; setCombo(0)
           return prev
         }
 
-        // closest to y=1
         const target = candidates.reduce((a, b) => Math.abs(a.y - 1) < Math.abs(b.y - 1) ? a : b)
         const diff = Math.abs(target.y - 1)
 
@@ -339,26 +312,13 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           comboRef.current++
           setCombo(comboRef.current)
           setMaxCombo(p => Math.max(p, comboRef.current))
-          hitNotesRef.current++
-          setHitNotes(hitNotesRef.current)
-          if (type === 'perfect') {
-            perfectHitsRef.current++
-            setPerfectHits(p => p + 1)
-          }
-        } else {
-          comboRef.current = 0
-          setCombo(0)
-        }
+          hitNotesRef.current++; setHitNotes(hitNotesRef.current)
+          if (type === 'perfect') { perfectHitsRef.current++; setPerfectHits(p => p + 1) }
+        } else { comboRef.current = 0; setCombo(0) }
 
         const bonus = Math.floor(pts * (1 + comboRef.current * 0.1))
-        scoreRef.current += bonus
-        setScore(scoreRef.current)
-
-        setLaneEffects(e2 => [...e2, {
-          id: Date.now(), lane: laneIdx as 0|1|2|3,
-          type, createdAt: elapsed,
-        }])
-
+        scoreRef.current += bonus; setScore(scoreRef.current)
+        setLaneEffects(e2 => [...e2, { id: Date.now(), lane: laneIdx as 0|1|2|3, type, createdAt: elapsed }])
         return prev.map(n => n.id === target.id ? { ...n, hit: true } : n)
       })
     }
@@ -366,33 +326,24 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     const handleKeyUp = (e: KeyboardEvent) => {
       const laneIdx = LANE_KEYS.indexOf(e.key.toLowerCase())
       if (laneIdx === -1) return
-      setPressedLanes(prev => {
-        const next = [...prev]
-        next[laneIdx] = false
-        return next
-      })
+      setPressedLanes(prev => { const next = [...prev]; next[laneIdx] = false; return next })
     }
 
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('keyup', handleKeyUp)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-    }
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp) }
   }, [gameState])
 
-  // ── Cleanup on unmount ──────────────────────────────────────────────────
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
-  // ── Derived ─────────────────────────────────────────────────────────────
   const accuracy = totalNotes > 0 ? Math.round((hitNotes / totalNotes) * 100) : 100
   const elapsed = gameState === 'playing' ? performance.now() - gameStartTimeRef.current : 0
   const timeLeft = Math.max(0, GAME_DURATION - Math.floor(elapsed / 1000))
   const rating = getRating(accuracy)
+  const trackBpm = currentTrack?.bpm && currentTrack.bpm > 0 ? currentTrack.bpm : null
 
   if (!currentTrack) return null
 
-  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div
       className={`fixed inset-0 z-60 flex flex-col transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}
@@ -411,19 +362,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         />
       </div>
 
-      {/* Subtle grid pattern overlay */}
       <div
         className="absolute inset-0 opacity-[0.03]"
         style={{
-          backgroundImage: `
-            linear-gradient(rgba(34,197,94,0.5) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(34,197,94,0.5) 1px, transparent 1px)
-          `,
+          backgroundImage: `linear-gradient(rgba(34,197,94,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(34,197,94,0.5) 1px, transparent 1px)`,
           backgroundSize: '40px 40px',
         }}
       />
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="relative z-10 flex items-center justify-between px-6 pt-6 pb-3 shrink-0">
         <button
           onClick={() => { stopGame(); onClose() }}
@@ -436,6 +383,10 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-2">
           <Music2 size={14} className="text-green-500" />
           <span className="text-xs uppercase tracking-[0.2em] text-zinc-400 font-semibold">Rhythm</span>
+          {/* Show BPM badge in header while playing */}
+          {gameState === 'playing' && (
+            <span className="text-xs text-zinc-600 font-mono ml-1">{gameBpm} BPM</span>
+          )}
         </div>
 
         <button
@@ -446,24 +397,16 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      {/* ── Stats bar ── */}
+      {/* Stats bar */}
       <div className="relative z-10 flex items-center justify-between px-8 py-2 shrink-0">
-        {/* Score */}
         <div className="w-32">
           <p className="text-xs text-zinc-600 uppercase tracking-widest">Score</p>
-          <p className="text-2xl font-bold text-white tabular-nums leading-tight">
-            {score.toLocaleString()}
-          </p>
+          <p className="text-2xl font-bold text-white tabular-nums leading-tight">{score.toLocaleString()}</p>
         </div>
 
-        {/* Combo — center */}
         <div className="text-center">
           {combo > 1 && (
-            <div
-              key={combo}
-              className="animate-[comboPop_0.2s_ease-out]"
-              style={{ animation: 'comboIn 0.15s cubic-bezier(0.34,1.56,0.64,1)' }}
-            >
+            <div key={combo} style={{ animation: 'comboIn 0.15s cubic-bezier(0.34,1.56,0.64,1)' }}>
               <p
                 className="font-black tabular-nums leading-none"
                 style={{
@@ -479,18 +422,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* Timer + accuracy */}
         <div className="w-32 text-right">
           <p className="text-xs text-zinc-600 uppercase tracking-widest">
             {gameState === 'playing' ? `${timeLeft}s` : 'Accuracy'}
           </p>
-          <p className="text-2xl font-bold tabular-nums leading-tight" style={{ color: '#22c55e' }}>
-            {accuracy}%
-          </p>
+          <p className="text-2xl font-bold tabular-nums leading-tight" style={{ color: '#22c55e' }}>{accuracy}%</p>
         </div>
       </div>
 
-      {/* ── Progress bar ── */}
+      {/* Progress bar */}
       {gameState === 'playing' && (
         <div className="relative z-10 px-8 shrink-0">
           <div className="h-0.5 w-full bg-zinc-800 rounded-full overflow-hidden">
@@ -502,22 +442,35 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {/* ── Game area ── */}
+      {/* Game area */}
       <div ref={gameAreaRef} className="relative z-10 flex-1 overflow-hidden">
 
-        {/* ── IDLE STATE ── */}
+        {/* IDLE */}
         {gameState === 'idle' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-8">
-            {/* Album art */}
             <div className="relative w-24 h-24 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10">
               <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
             </div>
             <div className="text-center">
               <p className="text-white font-bold text-lg">{currentTrack.title}</p>
               <p className="text-zinc-400 text-sm">{currentTrack.artist}</p>
+
+              {/* BPM indicator */}
+              <div className="mt-3 flex items-center justify-center gap-2">
+                {trackBpm ? (
+                  <span className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-mono px-3 py-1.5 rounded-full">
+                    <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                    {trackBpm} BPM
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 bg-zinc-800 text-zinc-500 text-xs font-mono px-3 py-1.5 rounded-full">
+                    <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full" />
+                    {DEFAULT_BPM} BPM (default)
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* Controls legend */}
             <div className="flex gap-6 text-center">
               <div className="space-y-1">
                 <p className="text-xs text-zinc-500 uppercase tracking-widest">Circle notes</p>
@@ -545,28 +498,25 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* ── COUNTDOWN ── */}
+        {/* COUNTDOWN */}
         {gameState === 'countdown' && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div
-              key={countdown}
-              className="text-center"
-              style={{ animation: 'countdownPop 0.8s cubic-bezier(0.34,1.56,0.64,1)' }}
-            >
-              <p
-                className="font-black text-white"
-                style={{ fontSize: countdown === 0 ? '48px' : '120px', lineHeight: 1 }}
-              >
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
+            <div key={countdown} style={{ animation: 'countdownPop 0.8s cubic-bezier(0.34,1.56,0.64,1)' }}>
+              <p className="font-black text-white text-center" style={{ fontSize: countdown === 0 ? '48px' : '120px', lineHeight: 1 }}>
                 {countdown === 0 ? 'GO!' : countdown}
               </p>
             </div>
+            {/* Show BPM during countdown */}
+            <p className="text-zinc-600 text-xs font-mono tracking-widest uppercase">
+              {gameBpm} BPM{!trackBpm ? ' (default)' : ''}
+            </p>
           </div>
         )}
 
-        {/* ── PLAYING ── */}
+        {/* PLAYING */}
         {gameState === 'playing' && (
           <>
-            {/* Circle notes zone (upper 70%) */}
+            {/* Circle notes zone */}
             <div className="absolute inset-0" style={{ bottom: '200px' }}>
               {circleNotes.filter(n => !n.hit).map(n => {
                 const elapsed2 = performance.now() - gameStartTimeRef.current
@@ -580,180 +530,60 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
                     key={n.id}
                     onClick={(e) => !n.missed && handleCircleClick(n, e)}
                     className="absolute rounded-full flex items-center justify-center"
-                    style={{
-                      left: n.x - 22,
-                      top: n.y - 22,
-                      width: 44,
-                      height: 44,
-                      opacity,
-                      transform: `scale(${scale})`,
-                      transition: n.missed ? 'all 0.4s ease' : 'none',
-                      cursor: n.missed ? 'default' : 'pointer',
-                    }}
+                    style={{ left: n.x - 22, top: n.y - 22, width: 44, height: 44, opacity, transform: `scale(${scale})`, transition: n.missed ? 'all 0.4s ease' : 'none', cursor: n.missed ? 'default' : 'pointer' }}
                   >
-                    {/* Shrinking approach ring */}
-                    <div
-                      className="absolute inset-0 rounded-full border-2 border-green-400"
-                      style={{
-                        transform: `scale(${1.8 - lifeRatio * 0.8})`,
-                        opacity: Math.max(0, 1 - lifeRatio),
-                        transition: 'none',
-                      }}
-                    />
-                    {/* Core circle */}
-                    <div
-                      className="absolute inset-0 rounded-full"
-                      style={{
-                        background: n.missed
-                          ? 'rgba(239,68,68,0.3)'
-                          : `rgba(34,197,94,${0.15 + lifeRatio * 0.25})`,
-                        border: `2px solid ${n.missed ? '#ef4444' : '#22c55e'}`,
-                        boxShadow: n.missed ? 'none' : `0 0 ${8 + lifeRatio * 12}px rgba(34,197,94,0.4)`,
-                      }}
-                    />
-                    {/* Approach progress ring */}
+                    <div className="absolute inset-0 rounded-full border-2 border-green-400" style={{ transform: `scale(${1.8 - lifeRatio * 0.8})`, opacity: Math.max(0, 1 - lifeRatio) }} />
+                    <div className="absolute inset-0 rounded-full" style={{ background: n.missed ? 'rgba(239,68,68,0.3)' : `rgba(34,197,94,${0.15 + lifeRatio * 0.25})`, border: `2px solid ${n.missed ? '#ef4444' : '#22c55e'}`, boxShadow: n.missed ? 'none' : `0 0 ${8 + lifeRatio * 12}px rgba(34,197,94,0.4)` }} />
                     <svg className="absolute inset-0" width="44" height="44" style={{ transform: 'rotate(-90deg)' }}>
-                      <circle
-                        cx="22" cy="22" r="19"
-                        fill="none"
-                        stroke="#22c55e"
-                        strokeWidth="2"
-                        strokeDasharray={`${119.4 * lifeRatio} 119.4`}
-                        opacity="0.6"
-                      />
+                      <circle cx="22" cy="22" r="19" fill="none" stroke="#22c55e" strokeWidth="2" strokeDasharray={`${119.4 * lifeRatio} 119.4`} opacity="0.6" />
                     </svg>
                   </button>
                 )
               })}
 
-              {/* Hit effects */}
               {hitEffects.map(e => {
                 const age2 = performance.now() - gameStartTimeRef.current - e.createdAt
                 const progress2 = age2 / EFFECT_DURATION
                 return (
-                  <div
-                    key={e.id}
-                    className="absolute pointer-events-none select-none font-black text-sm uppercase tracking-widest"
-                    style={{
-                      left: e.x - 30,
-                      top: e.y - 40 - progress2 * 30,
-                      opacity: 1 - progress2,
-                      color: e.type === 'perfect' ? '#22c55e' : e.type === 'good' ? '#fbbf24' : '#ef4444',
-                      textShadow: `0 0 10px currentColor`,
-                      width: 80,
-                      textAlign: 'center',
-                      transform: `scale(${1 + progress2 * 0.3})`,
-                    }}
-                  >
+                  <div key={e.id} className="absolute pointer-events-none select-none font-black text-sm uppercase tracking-widest" style={{ left: e.x - 30, top: e.y - 40 - progress2 * 30, opacity: 1 - progress2, color: e.type === 'perfect' ? '#22c55e' : e.type === 'good' ? '#fbbf24' : '#ef4444', textShadow: `0 0 10px currentColor`, width: 80, textAlign: 'center', transform: `scale(${1 + progress2 * 0.3})` }}>
                     {e.type === 'perfect' ? '✦ Perfect' : e.type === 'good' ? 'Good' : 'Miss'}
                   </div>
                 )
               })}
             </div>
 
-            {/* Lane notes zone (lower section) */}
-            <div
-              className="absolute left-0 right-0"
-              style={{ bottom: 0, height: '200px' }}
-            >
-              {/* Hit line */}
-              <div
-                className="absolute left-0 right-0"
-                style={{
-                  bottom: '48px',
-                  height: '2px',
-                  background: 'linear-gradient(90deg, transparent, rgba(34,197,94,0.4), rgba(34,197,94,0.8), rgba(34,197,94,0.4), transparent)',
-                }}
-              />
+            {/* Lane notes zone */}
+            <div className="absolute left-0 right-0" style={{ bottom: 0, height: '200px' }}>
+              <div className="absolute left-0 right-0" style={{ bottom: '48px', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(34,197,94,0.4), rgba(34,197,94,0.8), rgba(34,197,94,0.4), transparent)' }} />
 
-              {/* Lanes */}
               <div className="absolute inset-0 flex">
                 {[0, 1, 2, 3].map(laneIdx => {
                   const laneEffect = laneEffects.find(e => e.lane === laneIdx)
                   const isPressed = pressedLanes[laneIdx]
                   return (
-                    <div
-                      key={laneIdx}
-                      className="flex-1 relative"
-                      style={{
-                        borderLeft: laneIdx === 0 ? 'none' : '1px solid rgba(63,63,70,0.3)',
-                      }}
-                    >
-                      {/* Lane glow on press */}
-                      {isPressed && (
-                        <div
-                          className="absolute inset-0"
-                          style={{
-                            background: 'linear-gradient(to top, rgba(34,197,94,0.12), transparent)',
-                          }}
-                        />
-                      )}
+                    <div key={laneIdx} className="flex-1 relative" style={{ borderLeft: laneIdx === 0 ? 'none' : '1px solid rgba(63,63,70,0.3)' }}>
+                      {isPressed && <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(34,197,94,0.12), transparent)' }} />}
 
-                      {/* Notes in this lane */}
-                      {laneNotes
-                        .filter(n => n.lane === laneIdx)
-                        .map(n => {
-                          const noteBottom = (1 - n.y) * 152 + 48
-                          const opacity = n.hit
-                            ? Math.max(0, 1 - (n.y - 0.9) * 5)
-                            : n.missed
-                            ? 0.3
-                            : 1
-                          return (
-                            <div
-                              key={n.id}
-                              className="absolute left-1 right-1 rounded-sm"
-                              style={{
-                                bottom: noteBottom,
-                                height: '20px',
-                                opacity,
-                                background: n.missed
-                                  ? '#ef4444'
-                                  : n.hit
-                                  ? '#22c55e'
-                                  : `linear-gradient(to bottom, rgba(34,197,94,0.9), rgba(34,197,94,0.6))`,
-                                boxShadow: n.hit || n.missed ? 'none' : '0 0 8px rgba(34,197,94,0.5)',
-                                border: `1px solid ${n.missed ? '#ef4444' : n.hit ? '#4ade80' : 'rgba(74,222,128,0.8)'}`,
-                              }}
-                            />
-                          )
-                        })}
+                      {laneNotes.filter(n => n.lane === laneIdx).map(n => {
+                        const noteBottom = (1 - n.y) * 152 + 48
+                        const opacity = n.hit ? Math.max(0, 1 - (n.y - 0.9) * 5) : n.missed ? 0.3 : 1
+                        return (
+                          <div key={n.id} className="absolute left-1 right-1 rounded-sm" style={{ bottom: noteBottom, height: '20px', opacity, background: n.missed ? '#ef4444' : n.hit ? '#22c55e' : `linear-gradient(to bottom, rgba(34,197,94,0.9), rgba(34,197,94,0.6))`, boxShadow: n.hit || n.missed ? 'none' : '0 0 8px rgba(34,197,94,0.5)', border: `1px solid ${n.missed ? '#ef4444' : n.hit ? '#4ade80' : 'rgba(74,222,128,0.8)'}` }} />
+                        )
+                      })}
 
-                      {/* Lane effect label */}
                       {laneEffect && (() => {
                         const elapsed3 = performance.now() - gameStartTimeRef.current
                         const age3 = elapsed3 - laneEffect.createdAt
                         const p3 = age3 / EFFECT_DURATION
                         return (
-                          <div
-                            className="absolute left-0 right-0 text-center font-black text-xs uppercase tracking-wider pointer-events-none"
-                            style={{
-                              bottom: 60 + p3 * 20,
-                              opacity: 1 - p3,
-                              color: laneEffect.type === 'perfect' ? '#22c55e' : laneEffect.type === 'good' ? '#fbbf24' : '#ef4444',
-                              textShadow: '0 0 8px currentColor',
-                            }}
-                          >
+                          <div className="absolute left-0 right-0 text-center font-black text-xs uppercase tracking-wider pointer-events-none" style={{ bottom: 60 + p3 * 20, opacity: 1 - p3, color: laneEffect.type === 'perfect' ? '#22c55e' : laneEffect.type === 'good' ? '#fbbf24' : '#ef4444', textShadow: '0 0 8px currentColor' }}>
                             {laneEffect.type === 'perfect' ? '✦' : laneEffect.type === 'good' ? '◆' : '✕'}
                           </div>
                         )
                       })()}
 
-                      {/* Key button */}
-                      <div
-                        className="absolute left-1/2 -translate-x-1/2 bottom-1 w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-all duration-75"
-                        style={{
-                          background: isPressed
-                            ? 'rgba(34,197,94,0.3)'
-                            : 'rgba(39,39,42,0.8)',
-                          border: isPressed
-                            ? '1px solid rgba(34,197,94,0.8)'
-                            : '1px solid rgba(63,63,70,0.6)',
-                          color: isPressed ? '#22c55e' : '#71717a',
-                          boxShadow: isPressed ? '0 0 12px rgba(34,197,94,0.3)' : 'none',
-                          transform: isPressed ? 'scale(0.9)' : 'scale(1)',
-                        }}
-                      >
+                      <div className="absolute left-1/2 -translate-x-1/2 bottom-1 w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-all duration-75" style={{ background: isPressed ? 'rgba(34,197,94,0.3)' : 'rgba(39,39,42,0.8)', border: isPressed ? '1px solid rgba(34,197,94,0.8)' : '1px solid rgba(63,63,70,0.6)', color: isPressed ? '#22c55e' : '#71717a', boxShadow: isPressed ? '0 0 12px rgba(34,197,94,0.3)' : 'none', transform: isPressed ? 'scale(0.9)' : 'scale(1)' }}>
                         {LANE_LABELS[laneIdx]}
                       </div>
                     </div>
@@ -764,20 +594,16 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           </>
         )}
 
-        {/* ── RESULT ── */}
+        {/* RESULT */}
         {gameState === 'result' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 px-8">
             <div className="text-center space-y-1">
               <p className="text-xs text-zinc-500 uppercase tracking-widest">Result</p>
-              <div
-                className="text-8xl font-black"
-                style={{ color: rating.color, textShadow: `0 0 40px ${rating.color}60` }}
-              >
+              <div className="text-8xl font-black" style={{ color: rating.color, textShadow: `0 0 40px ${rating.color}60` }}>
                 {rating.label}
               </div>
             </div>
 
-            {/* Stats grid */}
             <div className="grid grid-cols-2 gap-3 w-full max-w-xs">
               {[
                 { label: 'Score', value: score.toLocaleString() },
@@ -785,7 +611,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
                 { label: 'Max Combo', value: `${maxCombo}×` },
                 { label: 'Perfect', value: `${perfectHits}` },
                 { label: 'Hit', value: `${hitNotes}` },
-                { label: 'Total', value: `${totalNotes}` },
+                { label: 'BPM', value: `${gameBpm}${!trackBpm ? '*' : ''}` },
               ].map(s => (
                 <div key={s.label} className="bg-zinc-900/80 rounded-xl p-3 border border-zinc-800">
                   <p className="text-xs text-zinc-500 uppercase tracking-widest">{s.label}</p>
@@ -794,17 +620,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
               ))}
             </div>
 
+            {!trackBpm && (
+              <p className="text-zinc-600 text-xs">* BPM tidak tersedia, pakai default {DEFAULT_BPM}</p>
+            )}
+
             <div className="flex gap-3">
-              <button
-                onClick={startGame}
-                className="px-8 py-2.5 rounded-full bg-green-500 hover:bg-green-400 text-black font-bold text-sm transition-all hover:scale-105 active:scale-95"
-              >
+              <button onClick={startGame} className="px-8 py-2.5 rounded-full bg-green-500 hover:bg-green-400 text-black font-bold text-sm transition-all hover:scale-105 active:scale-95">
                 Play Again
               </button>
-              <button
-                onClick={() => { stopGame(); onClose() }}
-                className="px-8 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-sm transition-colors"
-              >
+              <button onClick={() => { stopGame(); onClose() }} className="px-8 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-sm transition-colors">
                 Exit
               </button>
             </div>
@@ -812,7 +636,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      {/* ── CSS animations (injected) ── */}
       <style>{`
         @keyframes countdownPop {
           0% { transform: scale(1.6); opacity: 0; }

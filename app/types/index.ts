@@ -9,6 +9,7 @@ export interface Track {
   duration: number        // in seconds
   url?: string            // YouTube video ID (resolved at play time for deezer tracks)
   youtubeQuery?: string   // used by deezer tracks to find YouTube match
+  bpm?: number            // beats per minute (from Deezer metadata)
 }
 
 export interface LyricLine {

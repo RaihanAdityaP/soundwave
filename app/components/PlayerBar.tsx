@@ -18,12 +18,11 @@ export default function PlayerBar() {
     currentTrack, isPlaying, volume, progress,
     setIsPlaying, setVolume, setProgress,
     playNext, playPrev, setLyrics,
-    setSeekTo,
+    setSeekTo, setResolving, resolving,
   } = usePlayerStore()
 
   const ytPlayerRef = useRef<any>(null)
   const [ytReady, setYtReady] = useState(false)
-  const [resolving, setResolving] = useState(false)
   const [resolvedId, setResolvedId] = useState<string | null>(null)
   const [showFullscreenLyrics, setShowFullscreenLyrics] = useState(false)
   const [prevVolume, setPrevVolume] = useState(0.8)
@@ -56,6 +55,7 @@ export default function PlayerBar() {
       .catch(() => {})
 
     if (currentTrack.source === 'youtube') {
+      setResolving(false)
       setResolvedId(currentTrack.url ?? null)
     } else if (currentTrack.source === 'deezer') {
       setResolving(true)
@@ -70,7 +70,7 @@ export default function PlayerBar() {
     }
   }, [currentTrack?.id])
 
-  // ── Media Session API — background play + lockscreen controls ───────────
+  // ── Media Session API ──────────────────────────────────────────────────
   useEffect(() => {
     if (!currentTrack || !('mediaSession' in navigator)) return
 
@@ -91,8 +91,8 @@ export default function PlayerBar() {
       setIsPlayingRef.current(false)
     })
     navigator.mediaSession.setActionHandler('previoustrack', () => {
-    usePlayerStore.getState().playPrev()
-  })
+      usePlayerStore.getState().playPrev()
+    })
     navigator.mediaSession.setActionHandler('nexttrack', () => {
       playNextRef.current()
     })
@@ -111,19 +111,16 @@ export default function PlayerBar() {
     }
   }, [currentTrack])
 
-  // Update Media Session playback state
   useEffect(() => {
     if (!('mediaSession' in navigator)) return
     navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
   }, [isPlaying])
 
-  // ── Visibility change — pastikan player tetap jalan di background ───────
+  // ── Visibility change ──────────────────────────────────────────────────
   useEffect(() => {
     const handleVisibilityChange = () => {
-      // Kalau tab jadi visible lagi dan harusnya playing, resume
       if (!document.hidden && isPlaying && ytPlayerRef.current?.getPlayerState) {
         const state = ytPlayerRef.current.getPlayerState()
-        // state 2 = paused, 5 = cued
         if (state === 2 || state === 5) {
           ytPlayerRef.current.playVideo()
         }
@@ -133,7 +130,7 @@ export default function PlayerBar() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [isPlaying])
 
-  // ── Init / load YouTube player ──────────────────────────────────────────
+  // ── Init / load YouTube player ─────────────────────────────────────────
   useEffect(() => {
     if (!resolvedId || !ytReady) return
 
@@ -142,11 +139,7 @@ export default function PlayerBar() {
         height: '0',
         width: '0',
         videoId: resolvedId,
-        playerVars: {
-          autoplay: 1,
-          // playsinline penting untuk mobile agar audio jalan di background
-          playsinline: 1,
-        },
+        playerVars: { autoplay: 1, playsinline: 1 },
         events: {
           onReady: () => {
             setSeekTo((seconds: number) => {
@@ -177,7 +170,7 @@ export default function PlayerBar() {
     if (ytPlayerRef.current?.setVolume) ytPlayerRef.current.setVolume(volume * 100)
   }, [volume])
 
-  // ── Progress interval + Media Session position state ────────────────────
+  // ── Progress interval ──────────────────────────────────────────────────
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (!currentTrack) return
@@ -191,7 +184,6 @@ export default function PlayerBar() {
         const progress = currentTime / duration
         setProgress(progress)
 
-        // Update Media Session position state (biar scrubbar di notifikasi akurat)
         if ('mediaSession' in navigator && navigator.mediaSession.setPositionState) {
           try {
             navigator.mediaSession.setPositionState({
@@ -252,15 +244,25 @@ export default function PlayerBar() {
         >
           <div className="relative w-12 h-12 shrink-0 rounded overflow-hidden">
             <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <Mic2 size={16} className="text-white" />
-            </div>
+            {/* Loading shimmer overlay on album art in player bar */}
+            {resolving && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            {!resolving && (
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <Mic2 size={16} className="text-white" />
+              </div>
+            )}
           </div>
           <div className="min-w-0">
             <p className="text-white text-sm font-medium truncate group-hover:text-green-400 transition-colors">
               {currentTrack.title}
             </p>
-            <p className="text-zinc-400 text-xs truncate">{currentTrack.artist}</p>
+            <p className={`text-xs truncate ${resolving ? 'text-green-400 animate-pulse' : 'text-zinc-400'}`}>
+              {resolving ? 'Memuat lagu…' : currentTrack.artist}
+            </p>
           </div>
         </button>
 
@@ -293,7 +295,9 @@ export default function PlayerBar() {
             <div className="relative flex-1 h-1 group cursor-pointer">
               <div className="absolute inset-0 bg-zinc-600 rounded-full" />
               <div
-                className="absolute inset-y-0 left-0 bg-white group-hover:bg-green-500 rounded-full transition-colors pointer-events-none"
+                className={`absolute inset-y-0 left-0 rounded-full transition-colors pointer-events-none ${
+                  resolving ? 'bg-zinc-500 animate-pulse' : 'bg-white group-hover:bg-green-500'
+                }`}
                 style={{ width: `${Math.min(safeProgress * 100, 100)}%` }}
               />
               <input
@@ -303,7 +307,8 @@ export default function PlayerBar() {
                 step={0.001}
                 value={safeProgress}
                 onChange={handleSeek}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                disabled={resolving}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
               />
             </div>
             <span className="text-zinc-500 text-xs w-8 tabular-nums">
@@ -329,7 +334,6 @@ export default function PlayerBar() {
             <button
               onClick={handleMuteToggle}
               className="text-zinc-400 hover:text-white transition-colors shrink-0"
-              title={volume === 0 ? 'Unmute' : 'Mute'}
             >
               <VolumeIcon size={18} />
             </button>
@@ -370,20 +374,25 @@ export default function PlayerBar() {
       <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 bg-zinc-800/95 backdrop-blur-md border-t border-zinc-700/50 px-3 py-2">
         <div id="yt-player-mobile" className="hidden" />
 
+        {/* Progress bar — pulse while resolving */}
         <div className="relative h-0.5 w-full mb-2 rounded-full overflow-hidden bg-zinc-700">
           <div
-            className="absolute inset-y-0 left-0 bg-green-500 rounded-full"
-            style={{ width: `${Math.min(safeProgress * 100, 100)}%` }}
+            className={`absolute inset-y-0 left-0 rounded-full ${
+              resolving ? 'bg-zinc-500 animate-pulse w-full' : 'bg-green-500'
+            }`}
+            style={resolving ? {} : { width: `${Math.min(safeProgress * 100, 100)}%` }}
           />
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.001}
-            value={safeProgress}
-            onChange={handleSeek}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          />
+          {!resolving && (
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.001}
+              value={safeProgress}
+              onChange={handleSeek}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -393,12 +402,19 @@ export default function PlayerBar() {
           >
             <div className="relative w-10 h-10 shrink-0 rounded overflow-hidden">
               <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
+              {resolving && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded">
+                  <div className="w-4 h-4 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
             </div>
             <div className="min-w-0">
               <p className="text-white text-sm font-medium truncate leading-tight">
                 {currentTrack.title}
               </p>
-              <p className="text-zinc-400 text-xs truncate">{currentTrack.artist}</p>
+              <p className={`text-xs truncate ${resolving ? 'text-green-400 animate-pulse' : 'text-zinc-400'}`}>
+                {resolving ? 'Memuat lagu…' : currentTrack.artist}
+              </p>
             </div>
           </button>
 
