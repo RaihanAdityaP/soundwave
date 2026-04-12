@@ -10,7 +10,10 @@ interface PlayerState {
   progress: number
   lyrics: LyricLine[]
   seekTo: ((seconds: number) => void) | null
-  resolving: boolean // ← NEW: true while fetching YouTube ID for Deezer tracks
+  resolving: boolean
+
+  // Callback yang dipanggil PlayerBar saat YouTube confirmed playing (state=1)
+  onAudioPlaying: (() => void) | null
 
   setCurrentTrack: (track: Track) => void
   setQueue: (tracks: Track[], startIndex?: number) => void
@@ -20,7 +23,8 @@ interface PlayerState {
   setProgress: (progress: number) => void
   setLyrics: (lyrics: LyricLine[]) => void
   setSeekTo: (fn: (seconds: number) => void) => void
-  setResolving: (v: boolean) => void // ← NEW
+  setResolving: (v: boolean) => void
+  setOnAudioPlaying: (fn: (() => void) | null) => void
   playNext: () => void
   playPrev: () => void
 }
@@ -35,6 +39,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   lyrics: [],
   seekTo: null,
   resolving: false,
+  onAudioPlaying: null,
 
   setQueue: (tracks, startIndex = 0) => {
     const track = tracks[startIndex] ?? null
@@ -49,6 +54,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setLyrics: (lyrics) => set({ lyrics }),
   setSeekTo: (fn) => set({ seekTo: fn }),
   setResolving: (v) => set({ resolving: v }),
+  setOnAudioPlaying: (fn) => set({ onAudioPlaying: fn }),
 
   playNext: () => {
     const { queue, currentIndex } = get()

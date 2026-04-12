@@ -19,6 +19,7 @@ export default function PlayerBar() {
     setIsPlaying, setVolume, setProgress,
     playNext, playPrev, setLyrics,
     setSeekTo, setResolving, resolving,
+    onAudioPlaying,
   } = usePlayerStore()
 
   const ytPlayerRef = useRef<any>(null)
@@ -30,9 +31,12 @@ export default function PlayerBar() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const playNextRef = useRef(playNext)
   const setIsPlayingRef = useRef(setIsPlaying)
+  // Keep ref fresh so onStateChange closure always calls latest onAudioPlaying
+  const onAudioPlayingRef = useRef(onAudioPlaying)
 
   useEffect(() => { playNextRef.current = playNext }, [playNext])
   useEffect(() => { setIsPlayingRef.current = setIsPlaying }, [setIsPlaying])
+  useEffect(() => { onAudioPlayingRef.current = onAudioPlaying }, [onAudioPlaying])
 
   // ── YouTube IFrame API ──────────────────────────────────────────────────
   useEffect(() => {
@@ -148,7 +152,11 @@ export default function PlayerBar() {
           },
           onStateChange: (e: any) => {
             if (e.data === 0) playNextRef.current()
-            if (e.data === 1) setIsPlayingRef.current(true)
+            if (e.data === 1) {
+              setIsPlayingRef.current(true)
+              // Fire game callback saat audio confirmed playing
+              onAudioPlayingRef.current?.()
+            }
             if (e.data === 2) setIsPlayingRef.current(false)
           },
         },
@@ -244,7 +252,6 @@ export default function PlayerBar() {
         >
           <div className="relative w-12 h-12 shrink-0 rounded overflow-hidden">
             <Image src={currentTrack.thumbnail} alt="" fill className="object-cover" />
-            {/* Loading shimmer overlay on album art in player bar */}
             {resolving && (
               <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                 <div className="w-5 h-5 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
@@ -374,7 +381,6 @@ export default function PlayerBar() {
       <div className="md:hidden fixed bottom-16 left-0 right-0 z-30 bg-zinc-800/95 backdrop-blur-md border-t border-zinc-700/50 px-3 py-2">
         <div id="yt-player-mobile" className="hidden" />
 
-        {/* Progress bar — pulse while resolving */}
         <div className="relative h-0.5 w-full mb-2 rounded-full overflow-hidden bg-zinc-700">
           <div
             className={`absolute inset-y-0 left-0 rounded-full ${
