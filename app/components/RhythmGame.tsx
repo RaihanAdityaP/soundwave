@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Image from 'next/image'
-import { X, ChevronDown, Music2 } from 'lucide-react'
+import { X, ChevronDown, Music2, AlertCircle } from 'lucide-react'
 import { usePlayerStore } from '@/store/playerStore'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -41,8 +41,10 @@ type LaneEffect = {
   createdAt: number
 }
 
-type GameState = 'idle' | 'countdown' | 'playing' | 'paused' | 'result'
+type GameState = 'idle' | 'countdown' | 'playing' | 'result'
 type GameMode = 'circle' | 'lane'
+
+// ── Constants ────────────────────────────────────────────────────────────────
 
 const LANE_KEYS = ['d', 'f', 'j', 'k']
 const LANE_LABELS = ['D', 'F', 'J', 'K']
@@ -60,6 +62,15 @@ const BAD_PRESS_SCORE_PENALTY = 80
 const DEFAULT_BPM = 128
 const MIN_BPM = 60
 const MAX_BPM = 200
+
+// Note harus sudah mencapai minimal 78% perjalanan sebelum bisa di-hit
+// Fix: "stuck kalau dipencet sebelum note sampai bawah"
+const LANE_HIT_ZONE_MIN = 0.78
+
+// Cooldown per-lane (ms): cegah spam penalty saat tidak ada note
+const LANE_PRESS_COOLDOWN_MS = 400
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getRating(accuracy: number) {
   if (accuracy >= 95) return { label: 'S', color: '#22c55e' }
@@ -93,7 +104,6 @@ function generateBeats(durationSec: number, bpm: number, seedKey: string): numbe
   const interval = 60000 / safeBpm
   const rand = createPrng(hashSeed(seedKey))
   const beats: number[] = []
-
   for (let t = 1000; t < durationSec * 1000; t += interval) {
     beats.push(t)
     const halfBeatChance = safeBpm > 140 ? 0.25 : 0.4
@@ -101,6 +111,24 @@ function generateBeats(durationSec: number, bpm: number, seedKey: string): numbe
   }
   return beats.sort((a, b) => a - b)
 }
+
+// Web Audio feedback — oscillator only, tidak tap ke stream eksternal
+function playHitSound(ctx: AudioContext, type: 'perfect' | 'good' | 'miss' | 'bad') {
+  try {
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.type = type === 'bad' ? 'sawtooth' : 'sine'
+    osc.frequency.value = type === 'perfect' ? 880 : type === 'good' ? 660 : type === 'miss' ? 220 : 150
+    gain.gain.setValueAtTime(0.18, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (type === 'bad' ? 0.08 : 0.12))
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.13)
+  } catch {}
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const { currentTrack, seekTo, setIsPlaying, resolving, setOnAudioPlaying } = usePlayerStore()
@@ -120,6 +148,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const [mounted, setMounted] = useState(false)
   const [gameBpm, setGameBpm] = useState<number>(DEFAULT_BPM)
   const [selectedMode, setSelectedMode] = useState<GameMode | null>(null)
+  const [audioEnabled, setAudioEnabled] = useState(false)
 
   const [circleNotes, setCircleNotes] = useState<CircleNote[]>([])
   const [laneNotes, setLaneNotes] = useState<LaneNote[]>([])
@@ -136,6 +165,8 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const gameModeRef = useRef<GameMode>('circle')
   const rngRef = useRef<() => number>(() => Math.random())
   const gameAreaRef = useRef<HTMLDivElement>(null)
+
+  // Score refs (stale closure fix)
   const comboRef = useRef(0)
   const scoreRef = useRef(0)
   const hitNotesRef = useRef(0)
@@ -146,6 +177,12 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const maxAccuracyPointsRef = useRef(0)
   const penaltyPointsRef = useRef(0)
 
+  // Lane press tracking
+  const laneLastPressRef = useRef<number[]>([-Infinity, -Infinity, -Infinity, -Infinity])
+  const laneHitInProgressRef = useRef<boolean[]>([false, false, false, false])
+
+  const audioCtxRef = useRef<AudioContext | null>(null)
+
   const seekToRef = useRef(seekTo)
   const setIsPlayingRef = useRef(setIsPlaying)
   useEffect(() => { seekToRef.current = seekTo }, [seekTo])
@@ -154,9 +191,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pendingGameRef = useRef<any>({})
 
+  // ── Mount: pause musik saat game dibuka ──────────────────────────────────
   useEffect(() => {
+    // Fix #2: lagu tetap muter saat idle di rhythm game screen
+    setIsPlayingRef.current(false)
     const t = setTimeout(() => setMounted(true), 30)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      setOnAudioPlaying(null)
+    }
   }, [])
 
   useEffect(() => {
@@ -167,16 +210,19 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  // Cleanup onAudioPlaying saat unmount
-  useEffect(() => {
-    return () => { setOnAudioPlaying(null) }
+  const initAudioContext = useCallback(() => {
+    if (!audioCtxRef.current) {
+      try {
+        audioCtxRef.current = new AudioContext()
+        setAudioEnabled(true)
+      } catch {}
+    } else if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume()
+      setAudioEnabled(true)
+    }
   }, [])
 
-  const applyScorePenalty = useCallback((penalty: number) => {
-    scoreRef.current = Math.max(0, scoreRef.current - penalty)
-    setScore(scoreRef.current)
-  }, [])
-
+  // ── Game loop ─────────────────────────────────────────────────────────────
   const gameLoopRef = useRef<() => void>(() => {})
 
   gameLoopRef.current = () => {
@@ -188,6 +234,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       return
     }
 
+    // Spawn notes
     while (
       nextBeatIdxRef.current < beatsRef.current.length &&
       beatsRef.current[nextBeatIdxRef.current] <= elapsed + LANE_TRAVEL_TIME
@@ -220,6 +267,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       nextBeatIdxRef.current++
     }
 
+    // Circle miss check
     setCircleNotes(prev => {
       const el = performance.now() - gameStartTimeRef.current
       return prev
@@ -238,11 +286,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         })
         .filter(n => {
           const age = performance.now() - gameStartTimeRef.current - n.spawnTime
-          if (n.missed) return age < n.hitWindow + 800
-          return true
+          return n.missed ? age < n.hitWindow + 800 : true
         })
     })
 
+    // Lane position update + miss check
     setLaneNotes(prev => {
       const el = performance.now() - gameStartTimeRef.current
       return prev
@@ -252,8 +300,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           const progress = Math.min(age / LANE_TRAVEL_TIME, 1)
           if (age > LANE_TRAVEL_TIME + GOOD_THRESHOLD) {
             comboRef.current = 0; setCombo(0)
-            missNotesRef.current++
-            setMissNotes(missNotesRef.current)
+            missNotesRef.current++; setMissNotes(missNotesRef.current)
             scoreRef.current = Math.max(0, scoreRef.current - MISS_SCORE_PENALTY)
             setScore(scoreRef.current)
             return { ...n, missed: true, y: 1 }
@@ -281,9 +328,8 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     rafRef.current = requestAnimationFrame(() => gameLoopRef.current())
   }
 
-  // ── Actual game loop start — dipanggil saat audio confirmed playing ─────
+  // ── Start game loop ───────────────────────────────────────────────────────
   const startGameLoop = useCallback((durationSec: number, bpm: number) => {
-    // Cancel fallback timeout kalau callback sudah fire duluan
     if (pendingGameRef.current._fallback) {
       clearTimeout(pendingGameRef.current._fallback)
       pendingGameRef.current._fallback = null
@@ -296,8 +342,9 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     setOnAudioPlaying(null)
   }, [currentTrack?.id])
 
-  // ── Start countdown ─────────────────────────────────────────────────────
+  // ── Start countdown ───────────────────────────────────────────────────────
   const startGame = useCallback((mode: GameMode) => {
+    initAudioContext()
     setSelectedMode(mode)
     gameModeRef.current = mode
 
@@ -308,11 +355,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       : DEFAULT_GAME_DURATION
     gameDurationRef.current = durationSec
 
-    const seedKey = `${currentTrack?.id ?? 'track'}-${mode}-${safeBpm}-${durationSec}`
-    rngRef.current = createPrng(hashSeed(seedKey))
+    rngRef.current = createPrng(hashSeed(`${currentTrack?.id ?? 'track'}-${mode}-${safeBpm}-${durationSec}`))
     setGameBpm(safeBpm)
 
-    setIsPlayingRef.current(false)
+    laneLastPressRef.current = [-Infinity, -Infinity, -Infinity, -Infinity]
+    laneHitInProgressRef.current = [false, false, false, false]
     setOnAudioPlaying(null)
 
     setGameState('countdown')
@@ -321,6 +368,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     setTotalNotes(0); setHitNotes(0); setPerfectHits(0); setMissNotes(0)
     setAccuracyPoints(0); setMaxAccuracyPoints(0); setPenaltyPoints(0)
     setCircleNotes([]); setLaneNotes([]); setHitEffects([]); setLaneEffects([])
+    setPressedLanes([false, false, false, false])
 
     comboRef.current = 0; scoreRef.current = 0
     hitNotesRef.current = 0; perfectHitsRef.current = 0
@@ -338,25 +386,27 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       }
     }, 1000)
     countdownIntervalRef.current = interval
-  }, [currentTrack])
+  }, [currentTrack, initAudioContext])
 
+  // Fix #2: beginPlaying dengan urutan pause → seek → play yang proper
   const beginPlaying = useCallback((durationSec: number, bpm: number) => {
-    // Seek ke 0 dan play
     setIsPlayingRef.current(false)
-    seekToRef.current?.(0)
-    setIsPlayingRef.current(true)
-
-    // Register callback — game loop start saat YouTube fire state=1
-    setOnAudioPlaying(() => () => {
-      startGameLoop(durationSec, bpm)
-    })
-
-    // Fallback 2 detik: kalau YT tidak fire state change (misal sudah playing)
-    const fallback = setTimeout(() => {
-      setOnAudioPlaying(null)
-      startGameLoop(durationSec, bpm)
-    }, 2000)
-    pendingGameRef.current._fallback = fallback
+    // Beri jeda kecil agar YouTube IFrame benar-benar pause dulu
+    setTimeout(() => {
+      seekToRef.current?.(0)
+      setTimeout(() => {
+        setIsPlayingRef.current(true)
+        setOnAudioPlaying(() => () => {
+          startGameLoop(durationSec, bpm)
+        })
+        // Fallback 2.5s
+        const fallback = setTimeout(() => {
+          setOnAudioPlaying(null)
+          startGameLoop(durationSec, bpm)
+        }, 2500)
+        pendingGameRef.current._fallback = fallback
+      }, 150)
+    }, 100)
   }, [currentTrack?.id, startGameLoop])
 
   const stopGame = useCallback(() => {
@@ -369,7 +419,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     }
   }, [])
 
-  // ── Circle hit ──────────────────────────────────────────────────────────
+  // ── Circle hit ────────────────────────────────────────────────────────────
   const handleCircleClick = useCallback((note: CircleNote, e: React.MouseEvent) => {
     e.stopPropagation()
     const elapsed = performance.now() - gameStartTimeRef.current
@@ -380,66 +430,96 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     let pts = 0
     if (diff < PERFECT_THRESHOLD) { type = 'perfect'; pts = 300 }
     else if (diff < GOOD_THRESHOLD) { type = 'good'; pts = 100 }
-    else { type = 'miss'; pts = 0 }
 
     if (type !== 'miss') {
       comboRef.current++
       setCombo(comboRef.current)
       setMaxCombo(prev => Math.max(prev, comboRef.current))
-      hitNotesRef.current++
-      setHitNotes(hitNotesRef.current)
+      hitNotesRef.current++; setHitNotes(hitNotesRef.current)
       const gain = type === 'perfect' ? PERFECT_ACCURACY_POINTS : GOOD_ACCURACY_POINTS
-      accuracyPointsRef.current += gain
-      setAccuracyPoints(accuracyPointsRef.current)
+      accuracyPointsRef.current += gain; setAccuracyPoints(accuracyPointsRef.current)
       if (type === 'perfect') { perfectHitsRef.current++; setPerfectHits(perfectHitsRef.current) }
     } else {
       comboRef.current = 0; setCombo(0)
-      missNotesRef.current++
-      setMissNotes(missNotesRef.current)
+      missNotesRef.current++; setMissNotes(missNotesRef.current)
       scoreRef.current = Math.max(0, scoreRef.current - MISS_SCORE_PENALTY)
       setScore(scoreRef.current)
     }
 
+    if (audioCtxRef.current) playHitSound(audioCtxRef.current, type)
+
     const bonus = Math.floor(pts * (1 + comboRef.current * 0.1))
-    scoreRef.current += bonus
-    setScore(scoreRef.current)
+    scoreRef.current += bonus; setScore(scoreRef.current)
     setCircleNotes(prev => prev.map(n => n.id === note.id ? { ...n, hit: true } : n))
     setHitEffects(prev => [...prev, { id: Date.now(), x: note.x, y: note.y, type, createdAt: elapsed }])
   }, [])
 
-  // ── Lane key press ──────────────────────────────────────────────────────
+  // ── Lane key handler ──────────────────────────────────────────────────────
   useEffect(() => {
     if (gameState !== 'playing' || gameModeRef.current !== 'lane') return
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return  // abaikan auto-repeat
       const laneIdx = LANE_KEYS.indexOf(e.key.toLowerCase())
       if (laneIdx === -1) return
       e.preventDefault()
 
+      // Cegah double-hit dalam window 50ms
+      if (laneHitInProgressRef.current[laneIdx]) return
+      laneHitInProgressRef.current[laneIdx] = true
+      setTimeout(() => { laneHitInProgressRef.current[laneIdx] = false }, 50)
+
       setPressedLanes(prev => { const next = [...prev]; next[laneIdx] = true; return next })
 
-      const elapsed = performance.now() - gameStartTimeRef.current
+      const now = performance.now()
+      const elapsed = now - gameStartTimeRef.current
 
       setLaneNotes(prev => {
-        const candidates = prev.filter(n => !n.hit && !n.missed && n.lane === laneIdx && n.y > 0.6)
+        // Kandidat: note yang sudah masuk hit zone (y >= LANE_HIT_ZONE_MIN)
+        const candidates = prev.filter(
+          n => !n.hit && !n.missed && n.lane === laneIdx && n.y >= LANE_HIT_ZONE_MIN
+        )
+
         if (candidates.length === 0) {
-          setLaneEffects(e2 => [...e2, { id: Date.now(), lane: laneIdx as 0|1|2|3, type: 'miss', createdAt: elapsed }])
+          // Cek note yang sedang turun tapi belum masuk hit zone
+          const comingNotes = prev.filter(
+            n => !n.hit && !n.missed && n.lane === laneIdx && n.y > 0 && n.y < LANE_HIT_ZONE_MIN
+          )
+
+          if (comingNotes.length > 0) {
+            // Note ada tapi belum sampai — ABAIKAN, tidak ada penalty
+            // Fix #1: "stuck kalau dipencet sebelum note sampai bawah"
+            return prev
+          }
+
+          // Tidak ada note aktif — penalty hanya kalau cooldown lewat
+          const cooldownOk = now - laneLastPressRef.current[laneIdx] > LANE_PRESS_COOLDOWN_MS
+          if (!cooldownOk) return prev
+
+          laneLastPressRef.current[laneIdx] = now
+          setLaneEffects(eff => [...eff, {
+            id: Date.now(), lane: laneIdx as 0|1|2|3, type: 'miss', createdAt: elapsed,
+          }])
           comboRef.current = 0; setCombo(0)
-          penaltyPointsRef.current += BAD_PRESS_PENALTY
-          setPenaltyPoints(penaltyPointsRef.current)
+          penaltyPointsRef.current += BAD_PRESS_PENALTY; setPenaltyPoints(penaltyPointsRef.current)
           scoreRef.current = Math.max(0, scoreRef.current - BAD_PRESS_SCORE_PENALTY)
           setScore(scoreRef.current)
+          if (audioCtxRef.current) playHitSound(audioCtxRef.current, 'bad')
           return prev
         }
 
-        const target = candidates.reduce((a, b) => Math.abs(a.y - 1) < Math.abs(b.y - 1) ? a : b)
+        laneLastPressRef.current[laneIdx] = now
+
+        // Note terdekat hit line
+        const target = candidates.reduce((a, b) =>
+          Math.abs(a.y - 1) < Math.abs(b.y - 1) ? a : b
+        )
         const diff = Math.abs(target.y - 1)
 
         let type: 'perfect' | 'good' | 'miss' = 'miss'
         let pts = 0
         if (diff < 0.08) { type = 'perfect'; pts = 300 }
         else if (diff < 0.18) { type = 'good'; pts = 100 }
-        else { type = 'miss'; pts = 0 }
 
         if (type !== 'miss') {
           comboRef.current++
@@ -447,20 +527,22 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           setMaxCombo(p => Math.max(p, comboRef.current))
           hitNotesRef.current++; setHitNotes(hitNotesRef.current)
           const gain = type === 'perfect' ? PERFECT_ACCURACY_POINTS : GOOD_ACCURACY_POINTS
-          accuracyPointsRef.current += gain
-          setAccuracyPoints(accuracyPointsRef.current)
+          accuracyPointsRef.current += gain; setAccuracyPoints(accuracyPointsRef.current)
           if (type === 'perfect') { perfectHitsRef.current++; setPerfectHits(p => p + 1) }
         } else {
           comboRef.current = 0; setCombo(0)
-          missNotesRef.current++
-          setMissNotes(missNotesRef.current)
+          missNotesRef.current++; setMissNotes(missNotesRef.current)
           scoreRef.current = Math.max(0, scoreRef.current - MISS_SCORE_PENALTY)
           setScore(scoreRef.current)
         }
 
+        if (audioCtxRef.current) playHitSound(audioCtxRef.current, type)
+
         const bonus = Math.floor(pts * (1 + comboRef.current * 0.1))
         scoreRef.current += bonus; setScore(scoreRef.current)
-        setLaneEffects(e2 => [...e2, { id: Date.now(), lane: laneIdx as 0|1|2|3, type, createdAt: elapsed }])
+        setLaneEffects(eff => [...eff, {
+          id: Date.now(), lane: laneIdx as 0|1|2|3, type, createdAt: elapsed,
+        }])
         return prev.map(n => n.id === target.id ? { ...n, hit: true } : n)
       })
     }
@@ -486,16 +568,20 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     setOnAudioPlaying(null)
   }, [])
 
+  // ── Derived ───────────────────────────────────────────────────────────────
   const rawAccuracy = maxAccuracyPoints > 0
     ? ((accuracyPoints - penaltyPoints) / maxAccuracyPoints) * 100
     : 100
   const accuracy = Math.max(0, Math.min(100, Math.round(rawAccuracy)))
-  const elapsed = gameState === 'playing' ? performance.now() - gameStartTimeRef.current : 0
+  const elapsed2 = gameState === 'playing' ? performance.now() - gameStartTimeRef.current : 0
   const totalDuration = gameDurationRef.current
-  const timeLeft = Math.max(0, totalDuration - Math.floor(elapsed / 1000))
+  const timeLeft = Math.max(0, totalDuration - Math.floor(elapsed2 / 1000))
   const rating = getRating(accuracy)
   const trackBpm = currentTrack?.bpm && currentTrack.bpm > 0 ? currentTrack.bpm : null
-  const canStartGame = !resolving && !!seekTo
+
+  // Fix #3: YouTube tracks tidak support seekTo di awal, disable rhythm game
+  const isYouTubeTrack = currentTrack?.source === 'youtube'
+  const canStartGame = !resolving && !!seekTo && !isYouTubeTrack
 
   if (!currentTrack) return null
 
@@ -515,7 +601,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           }}
         />
       </div>
-
       <div
         className="absolute inset-0 opacity-[0.03]"
         style={{
@@ -524,6 +609,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         }}
       />
 
+      {/* Header */}
       <div className="relative z-10 flex items-center justify-between px-6 pt-6 pb-3 shrink-0">
         <button
           onClick={() => { stopGame(); onClose() }}
@@ -532,15 +618,14 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           <ChevronDown size={20} className="group-hover:translate-y-0.5 transition-transform" />
           <span className="text-sm font-medium tracking-wide">Exit</span>
         </button>
-
         <div className="flex items-center gap-2">
           <Music2 size={14} className="text-green-500" />
           <span className="text-xs uppercase tracking-[0.2em] text-zinc-400 font-semibold">Rhythm</span>
           {gameState === 'playing' && trackBpm && (
             <span className="text-xs text-zinc-600 font-mono ml-1">{gameBpm} BPM</span>
           )}
+          {audioEnabled && <span className="text-[10px] text-green-700 font-mono ml-1">♪</span>}
         </div>
-
         <button
           onClick={() => { stopGame(); onClose() }}
           className="p-2 rounded-full hover:bg-zinc-800 text-zinc-500 hover:text-white transition-colors"
@@ -549,12 +634,12 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
+      {/* Score bar */}
       <div className="relative z-10 flex items-center justify-between px-8 py-2 shrink-0">
         <div className="w-32">
           <p className="text-xs text-zinc-600 uppercase tracking-widest">Score</p>
           <p className="text-2xl font-bold text-white tabular-nums leading-tight">{score.toLocaleString()}</p>
         </div>
-
         <div className="text-center">
           {combo > 1 && (
             <div key={combo} style={{ animation: 'comboIn 0.15s cubic-bezier(0.34,1.56,0.64,1)' }}>
@@ -572,7 +657,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
             </div>
           )}
         </div>
-
         <div className="w-32 text-right">
           <p className="text-xs text-zinc-600 uppercase tracking-widest">
             {gameState === 'playing' ? `${timeLeft}s` : 'Accuracy'}
@@ -592,8 +676,10 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {/* Game area */}
       <div ref={gameAreaRef} className="relative z-10 flex-1 overflow-hidden">
 
+        {/* ── IDLE ── */}
         {gameState === 'idle' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-8">
             <div className="relative w-24 h-24 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10">
@@ -603,7 +689,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
               <p className="text-white font-bold text-lg">{currentTrack.title}</p>
               <p className="text-zinc-400 text-sm">{currentTrack.artist}</p>
               {trackBpm && (
-                <div className="mt-3 flex items-center justify-center gap-2">
+                <div className="mt-3 flex items-center justify-center">
                   <span className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-mono px-3 py-1.5 rounded-full">
                     <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
                     {trackBpm} BPM
@@ -612,35 +698,52 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-md px-4">
-              <button
-                onClick={() => startGame('circle')}
-                disabled={!canStartGame}
-                className="rounded-2xl border border-zinc-700/70 bg-zinc-900/70 hover:border-green-500/60 hover:bg-zinc-900 p-4 text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <p className="text-zinc-500 text-[11px] uppercase tracking-[0.18em]">Circle Mode</p>
-                <p className="text-white text-base font-semibold mt-1">Klik / Tap Lingkaran</p>
-                <p className="text-zinc-400 text-xs mt-2">Note muncul mengikuti beat lagu yang dipilih.</p>
-              </button>
-              <button
-                onClick={() => startGame('lane')}
-                disabled={!canStartGame}
-                className="rounded-2xl border border-zinc-700/70 bg-zinc-900/70 hover:border-green-500/60 hover:bg-zinc-900 p-4 text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <p className="text-zinc-500 text-[11px] uppercase tracking-[0.18em]">Lane Mode</p>
-                <p className="text-white text-base font-semibold mt-1">D · F · J · K</p>
-                <p className="text-zinc-400 text-xs mt-2">Tekan key saat note turun ke hit line.</p>
-              </button>
-            </div>
+            {/* YouTube warning — Fix #3 */}
+            {isYouTubeTrack && (
+              <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-5 py-4 max-w-xs mx-4">
+                <AlertCircle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-amber-300 text-sm font-semibold">YouTube tidak didukung</p>
+                  <p className="text-amber-400/70 text-xs mt-1 leading-relaxed">
+                    Rhythm game hanya bisa dimainkan dengan track dari Deezer. Cari lagu yang sama lewat tab <span className="text-amber-300">Best Matches</span> di search.
+                  </p>
+                </div>
+              </div>
+            )}
 
-            {!canStartGame && (
-              <p className="text-xs text-amber-400 text-center px-4">
-                Player masih loading. Tunggu lagu siap dulu biar game dan audio mulai barengan.
-              </p>
+            {!isYouTubeTrack && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-md px-4">
+                  <button
+                    onClick={() => startGame('circle')}
+                    disabled={!canStartGame}
+                    className="rounded-2xl border border-zinc-700/70 bg-zinc-900/70 hover:border-green-500/60 hover:bg-zinc-900 p-4 text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <p className="text-zinc-500 text-[11px] uppercase tracking-[0.18em]">Circle Mode</p>
+                    <p className="text-white text-base font-semibold mt-1">Klik / Tap Lingkaran</p>
+                    <p className="text-zinc-400 text-xs mt-2">Note muncul mengikuti beat lagu.</p>
+                  </button>
+                  <button
+                    onClick={() => startGame('lane')}
+                    disabled={!canStartGame}
+                    className="rounded-2xl border border-zinc-700/70 bg-zinc-900/70 hover:border-green-500/60 hover:bg-zinc-900 p-4 text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <p className="text-zinc-500 text-[11px] uppercase tracking-[0.18em]">Lane Mode</p>
+                    <p className="text-white text-base font-semibold mt-1">D · F · J · K</p>
+                    <p className="text-zinc-400 text-xs mt-2">Tekan key saat note turun ke hit line.</p>
+                  </button>
+                </div>
+                {!canStartGame && (
+                  <p className="text-xs text-amber-400 text-center px-4">
+                    Player masih loading. Tunggu lagu siap dulu.
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
 
+        {/* ── COUNTDOWN ── */}
         {gameState === 'countdown' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             <div key={countdown} style={{ animation: 'countdownPop 0.8s cubic-bezier(0.34,1.56,0.64,1)' }}>
@@ -654,37 +757,56 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {/* ── PLAYING ── */}
         {gameState === 'playing' && (
           <>
             {selectedMode === 'circle' && (
               <div className="absolute inset-0">
                 {circleNotes.filter(n => !n.hit).map(n => {
-                  const elapsed2 = performance.now() - gameStartTimeRef.current
-                  const age = elapsed2 - n.spawnTime
+                  const el3 = performance.now() - gameStartTimeRef.current
+                  const age = el3 - n.spawnTime
                   const lifeRatio = Math.min(age / n.hitWindow, 1)
                   const opacity = n.missed ? Math.max(0, 1 - (age - n.hitWindow) / 400) : 1
                   const scale = n.missed ? 0.5 : 1
                   return (
                     <button
                       key={n.id}
-                      onClick={(e) => !n.missed && handleCircleClick(n, e)}
+                      onClick={e => !n.missed && handleCircleClick(n, e)}
                       className="absolute rounded-full flex items-center justify-center"
-                      style={{ left: n.x - 22, top: n.y - 22, width: 44, height: 44, opacity, transform: `scale(${scale})`, transition: n.missed ? 'all 0.4s ease' : 'none', cursor: n.missed ? 'default' : 'pointer' }}
+                      style={{
+                        left: n.x - 22, top: n.y - 22, width: 44, height: 44,
+                        opacity, transform: `scale(${scale})`,
+                        transition: n.missed ? 'all 0.4s ease' : 'none',
+                        cursor: n.missed ? 'default' : 'pointer',
+                      }}
                     >
-                      <div className="absolute inset-0 rounded-full border-2 border-green-400" style={{ transform: `scale(${1.8 - lifeRatio * 0.8})`, opacity: Math.max(0, 1 - lifeRatio) }} />
-                      <div className="absolute inset-0 rounded-full" style={{ background: n.missed ? 'rgba(239,68,68,0.3)' : `rgba(34,197,94,${0.15 + lifeRatio * 0.25})`, border: `2px solid ${n.missed ? '#ef4444' : '#22c55e'}`, boxShadow: n.missed ? 'none' : `0 0 ${8 + lifeRatio * 12}px rgba(34,197,94,0.4)` }} />
+                      <div className="absolute inset-0 rounded-full border-2 border-green-400"
+                        style={{ transform: `scale(${1.8 - lifeRatio * 0.8})`, opacity: Math.max(0, 1 - lifeRatio) }} />
+                      <div className="absolute inset-0 rounded-full"
+                        style={{
+                          background: n.missed ? 'rgba(239,68,68,0.3)' : `rgba(34,197,94,${0.15 + lifeRatio * 0.25})`,
+                          border: `2px solid ${n.missed ? '#ef4444' : '#22c55e'}`,
+                          boxShadow: n.missed ? 'none' : `0 0 ${8 + lifeRatio * 12}px rgba(34,197,94,0.4)`,
+                        }} />
                       <svg className="absolute inset-0" width="44" height="44" style={{ transform: 'rotate(-90deg)' }}>
-                        <circle cx="22" cy="22" r="19" fill="none" stroke="#22c55e" strokeWidth="2" strokeDasharray={`${119.4 * lifeRatio} 119.4`} opacity="0.6" />
+                        <circle cx="22" cy="22" r="19" fill="none" stroke="#22c55e" strokeWidth="2"
+                          strokeDasharray={`${119.4 * lifeRatio} 119.4`} opacity="0.6" />
                       </svg>
                     </button>
                   )
                 })}
-                {hitEffects.map(e => {
-                  const age2 = performance.now() - gameStartTimeRef.current - e.createdAt
-                  const progress2 = age2 / EFFECT_DURATION
+                {hitEffects.map(ef => {
+                  const age2 = performance.now() - gameStartTimeRef.current - ef.createdAt
+                  const p2 = age2 / EFFECT_DURATION
                   return (
-                    <div key={e.id} className="absolute pointer-events-none select-none font-black text-sm uppercase tracking-widest" style={{ left: e.x - 30, top: e.y - 40 - progress2 * 30, opacity: 1 - progress2, color: e.type === 'perfect' ? '#22c55e' : e.type === 'good' ? '#fbbf24' : '#ef4444', textShadow: `0 0 10px currentColor`, width: 80, textAlign: 'center', transform: `scale(${1 + progress2 * 0.3})` }}>
-                      {e.type === 'perfect' ? '✦ Perfect' : e.type === 'good' ? 'Good' : 'Miss'}
+                    <div key={ef.id} className="absolute pointer-events-none select-none font-black text-sm uppercase tracking-widest"
+                      style={{
+                        left: ef.x - 30, top: ef.y - 40 - p2 * 30, opacity: 1 - p2,
+                        color: ef.type === 'perfect' ? '#22c55e' : ef.type === 'good' ? '#fbbf24' : '#ef4444',
+                        textShadow: '0 0 10px currentColor', width: 80, textAlign: 'center',
+                        transform: `scale(${1 + p2 * 0.3})`,
+                      }}>
+                      {ef.type === 'perfect' ? '✦ Perfect' : ef.type === 'good' ? 'Good' : 'Miss'}
                     </div>
                   )
                 })}
@@ -693,34 +815,63 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
 
             {selectedMode === 'lane' && (
               <div className="absolute inset-0">
-                <div className="absolute left-0 right-0" style={{ bottom: '56px', height: '2px', background: 'linear-gradient(90deg, transparent, rgba(34,197,94,0.4), rgba(34,197,94,0.8), rgba(34,197,94,0.4), transparent)', zIndex: 2 }} />
+                <div className="absolute left-0 right-0"
+                  style={{
+                    bottom: '56px', height: '2px',
+                    background: 'linear-gradient(90deg, transparent, rgba(34,197,94,0.4), rgba(34,197,94,0.8), rgba(34,197,94,0.4), transparent)',
+                    zIndex: 2,
+                  }} />
                 <div className="absolute inset-0 flex">
                   {[0, 1, 2, 3].map(laneIdx => {
-                    const laneEffect = laneEffects.find(e => e.lane === laneIdx)
+                    const laneEff = laneEffects.find(e => e.lane === laneIdx)
                     const isPressed = pressedLanes[laneIdx]
                     return (
-                      <div key={laneIdx} className="flex-1 relative overflow-hidden" style={{ borderLeft: laneIdx === 0 ? 'none' : '1px solid rgba(63,63,70,0.3)' }}>
-                        {isPressed && <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(34,197,94,0.08), transparent)' }} />}
+                      <div key={laneIdx} className="flex-1 relative overflow-hidden"
+                        style={{ borderLeft: laneIdx === 0 ? 'none' : '1px solid rgba(63,63,70,0.3)' }}>
+                        {isPressed && (
+                          <div className="absolute inset-0"
+                            style={{ background: 'linear-gradient(to top, rgba(34,197,94,0.08), transparent)' }} />
+                        )}
                         {laneNotes.filter(n => n.lane === laneIdx).map(n => {
-                          const areaHeight = gameAreaRef.current?.clientHeight ?? 600
-                          const hitLineY = areaHeight - 56
+                          const areaH = gameAreaRef.current?.clientHeight ?? 600
+                          const hitLineY = areaH - 56
                           const noteTop = n.y * hitLineY - 10
                           const opacity = n.hit ? Math.max(0, 1 - (n.y - 0.9) * 10) : n.missed ? 0.25 : 1
                           return (
-                            <div key={n.id} className="absolute left-1 right-1 rounded-sm" style={{ top: noteTop, height: '20px', opacity, background: n.missed ? '#ef4444' : n.hit ? '#22c55e' : `linear-gradient(to bottom, rgba(34,197,94,0.9), rgba(34,197,94,0.6))`, boxShadow: n.hit || n.missed ? 'none' : '0 0 8px rgba(34,197,94,0.5)', border: `1px solid ${n.missed ? '#ef4444' : n.hit ? '#4ade80' : 'rgba(74,222,128,0.8)'}` }} />
+                            <div key={n.id} className="absolute left-1 right-1 rounded-sm"
+                              style={{
+                                top: noteTop, height: '20px', opacity,
+                                background: n.missed ? '#ef4444' : n.hit ? '#22c55e'
+                                  : `linear-gradient(to bottom, rgba(34,197,94,0.9), rgba(34,197,94,0.6))`,
+                                boxShadow: n.hit || n.missed ? 'none' : '0 0 8px rgba(34,197,94,0.5)',
+                                border: `1px solid ${n.missed ? '#ef4444' : n.hit ? '#4ade80' : 'rgba(74,222,128,0.8)'}`,
+                              }} />
                           )
                         })}
-                        {laneEffect && (() => {
-                          const elapsed3 = performance.now() - gameStartTimeRef.current
-                          const age3 = elapsed3 - laneEffect.createdAt
-                          const p3 = age3 / EFFECT_DURATION
+                        {laneEff && (() => {
+                          const el4 = performance.now() - gameStartTimeRef.current
+                          const age4 = el4 - laneEff.createdAt
+                          const p4 = age4 / EFFECT_DURATION
                           return (
-                            <div className="absolute left-0 right-0 text-center font-black text-xs uppercase tracking-wider pointer-events-none" style={{ bottom: 70 + p3 * 20, opacity: 1 - p3, color: laneEffect.type === 'perfect' ? '#22c55e' : laneEffect.type === 'good' ? '#fbbf24' : '#ef4444', textShadow: '0 0 8px currentColor' }}>
-                              {laneEffect.type === 'perfect' ? '✦' : laneEffect.type === 'good' ? '◆' : '✕'}
+                            <div className="absolute left-0 right-0 text-center font-black text-xs uppercase tracking-wider pointer-events-none"
+                              style={{
+                                bottom: 70 + p4 * 20, opacity: 1 - p4,
+                                color: laneEff.type === 'perfect' ? '#22c55e' : laneEff.type === 'good' ? '#fbbf24' : '#ef4444',
+                                textShadow: '0 0 8px currentColor',
+                              }}>
+                              {laneEff.type === 'perfect' ? '✦' : laneEff.type === 'good' ? '◆' : '✕'}
                             </div>
                           )
                         })()}
-                        <div className="absolute left-1/2 -translate-x-1/2 bottom-2 w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-all duration-75" style={{ background: isPressed ? 'rgba(34,197,94,0.3)' : 'rgba(39,39,42,0.8)', border: isPressed ? '1px solid rgba(34,197,94,0.8)' : '1px solid rgba(63,63,70,0.6)', color: isPressed ? '#22c55e' : '#71717a', boxShadow: isPressed ? '0 0 12px rgba(34,197,94,0.3)' : 'none', transform: isPressed ? 'scale(0.9)' : 'scale(1)', zIndex: 3 }}>
+                        <div className="absolute left-1/2 -translate-x-1/2 bottom-2 w-9 h-9 rounded flex items-center justify-center font-bold text-sm transition-all duration-75"
+                          style={{
+                            background: isPressed ? 'rgba(34,197,94,0.3)' : 'rgba(39,39,42,0.8)',
+                            border: isPressed ? '1px solid rgba(34,197,94,0.8)' : '1px solid rgba(63,63,70,0.6)',
+                            color: isPressed ? '#22c55e' : '#71717a',
+                            boxShadow: isPressed ? '0 0 12px rgba(34,197,94,0.3)' : 'none',
+                            transform: isPressed ? 'scale(0.9)' : 'scale(1)',
+                            zIndex: 3,
+                          }}>
                           {LANE_LABELS[laneIdx]}
                         </div>
                       </div>
@@ -732,11 +883,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           </>
         )}
 
+        {/* ── RESULT ── */}
         {gameState === 'result' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 px-8">
             <div className="text-center space-y-1">
               <p className="text-xs text-zinc-500 uppercase tracking-widest">Result</p>
-              <div className="text-8xl font-black" style={{ color: rating.color, textShadow: `0 0 40px ${rating.color}60` }}>{rating.label}</div>
+              <div className="text-8xl font-black"
+                style={{ color: rating.color, textShadow: `0 0 40px ${rating.color}60` }}>
+                {rating.label}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3 w-full max-w-xs">
               {[
@@ -757,10 +912,17 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
               ))}
             </div>
             <div className="flex gap-3">
-              <button onClick={() => startGame(selectedMode ?? 'circle')} disabled={!canStartGame} className="px-8 py-2.5 rounded-full bg-green-500 hover:bg-green-400 text-black font-bold text-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-50">
+              <button
+                onClick={() => startGame(selectedMode ?? 'circle')}
+                disabled={!canStartGame}
+                className="px-8 py-2.5 rounded-full bg-green-500 hover:bg-green-400 text-black font-bold text-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+              >
                 Play Again
               </button>
-              <button onClick={() => { stopGame(); onClose() }} className="px-8 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-sm transition-colors">
+              <button
+                onClick={() => { stopGame(); onClose() }}
+                className="px-8 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-sm transition-colors"
+              >
                 Exit
               </button>
             </div>
