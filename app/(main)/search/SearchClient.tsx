@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Search } from 'lucide-react'
 import { Track } from '@/types'
@@ -16,15 +16,22 @@ export default function SearchClient() {
   })
   const [loading, setLoading] = useState(false)
 
+  // Track query yang sudah/sedang di-fetch agar tidak double-call
+  const lastSearchedRef = useRef<string | null>(null)
+
   const search = useCallback(async (q: string) => {
-    if (!q.trim()) return
+    const trimmed = q.trim()
+    if (!trimmed) return
+    // Cegah re-fetch kalau query sama persis
+    if (lastSearchedRef.current === trimmed) return
+    lastSearchedRef.current = trimmed
+
     setLoading(true)
-    router.push(`/search?q=${encodeURIComponent(q)}`, { scroll: false })
 
     try {
       const [yt, dz] = await Promise.all([
-        fetch(`/api/youtube?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => []),
-        fetch(`/api/deezer?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => []),
+        fetch(`/api/youtube?q=${encodeURIComponent(trimmed)}`).then(r => r.json()).catch(() => []),
+        fetch(`/api/deezer?q=${encodeURIComponent(trimmed)}`).then(r => r.json()).catch(() => []),
       ])
       setResults({ youtube: Array.isArray(yt) ? yt : [], deezer: Array.isArray(dz) ? dz : [] })
     } catch {
@@ -32,11 +39,13 @@ export default function SearchClient() {
     }
 
     setLoading(false)
-  }, [router])
+  }, [])
 
+  // Hanya trigger dari URL (navigasi awal / back-forward)
   useEffect(() => {
     const q = searchParams.get('q')
     if (q) {
+      setQuery(q)
       const id = setTimeout(() => { void search(q) }, 0)
       return () => clearTimeout(id)
     }
@@ -44,7 +53,12 @@ export default function SearchClient() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    search(query)
+    const trimmed = query.trim()
+    if (!trimmed) return
+    // Reset guard supaya URL push tidak blocked saat query beda
+    lastSearchedRef.current = null
+    // Push URL dulu — useEffect di atas akan trigger search
+    router.push(`/search?q=${encodeURIComponent(trimmed)}`, { scroll: false })
   }
 
   const hasResults = results.deezer.length > 0 || results.youtube.length > 0

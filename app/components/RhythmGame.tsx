@@ -385,6 +385,9 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     accuracyPointsRef.current = 0; maxAccuracyPointsRef.current = 0
     penaltyPointsRef.current = 0; noteIdRef.current = 0; nextBeatIdxRef.current = 0
 
+    seekToRef.current?.(0)
+    setIsPlayingRef.current(true)
+    
     let c = 3
     const interval = setInterval(() => {
       c--
