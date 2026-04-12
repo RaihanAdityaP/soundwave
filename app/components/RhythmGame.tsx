@@ -370,6 +370,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     laneLastPressRef.current = [-Infinity, -Infinity, -Infinity, -Infinity]
     laneHitInProgressRef.current = [false, false, false, false]
     setOnAudioPlaying(null)
+    setIsPlayingRef.current(false)
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current)
+      countdownIntervalRef.current = null
+    }
 
     setGameState('countdown')
     setCountdown(3)
@@ -384,9 +389,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     missNotesRef.current = 0; totalNotesRef.current = 0
     accuracyPointsRef.current = 0; maxAccuracyPointsRef.current = 0
     penaltyPointsRef.current = 0; noteIdRef.current = 0; nextBeatIdxRef.current = 0
-
-    seekToRef.current?.(0)
-    setIsPlayingRef.current(true)
     
     let c = 3
     const interval = setInterval(() => {
@@ -394,32 +396,33 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       setCountdown(c)
       if (c <= 0) {
         clearInterval(interval)
+        countdownIntervalRef.current = null
         beginPlaying(durationSec, safeBpm)
       }
     }, 1000)
     countdownIntervalRef.current = interval
   }, [currentTrack, initAudioContext])
 
-  // Fix #2: beginPlaying dengan urutan pause → seek → play yang proper
+  // Start playback tepat saat countdown selesai (tanpa muter saat countdown)
   const beginPlaying = useCallback((durationSec: number, bpm: number) => {
-    setIsPlayingRef.current(false)
-    // Beri jeda kecil agar YouTube IFrame benar-benar pause dulu
-    setTimeout(() => {
-      seekToRef.current?.(0)
-      setTimeout(() => {
-        setOnAudioPlaying(() => () => {
-          startGameLoop(durationSec, bpm)
-        })
-        setIsPlayingRef.current(true)
-        // Fallback kalau event "playing" dari YouTube terlambat / tidak terpanggil
-        const fallback = setTimeout(() => {
-          setOnAudioPlaying(null)
-          startGameLoop(durationSec, bpm)
-        }, 1200)
-        pendingGameRef.current._fallback = fallback
-      }, 150)
-    }, 100)
-  }, [currentTrack?.id, startGameLoop])
+    if (pendingGameRef.current._fallback) {
+      clearTimeout(pendingGameRef.current._fallback)
+      pendingGameRef.current._fallback = null
+    }
+
+    setOnAudioPlaying(() => () => {
+      startGameLoop(durationSec, bpm)
+    })
+    seekToRef.current?.(0)
+    setIsPlayingRef.current(true)
+
+    // Fallback kalau event "playing" terlambat / tidak terpanggil
+    const fallback = setTimeout(() => {
+      setOnAudioPlaying(null)
+      startGameLoop(durationSec, bpm)
+    }, 1500)
+    pendingGameRef.current._fallback = fallback
+  }, [startGameLoop])
 
   const stopGame = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
@@ -636,7 +639,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           {gameState === 'playing' && trackBpm && (
             <span className="text-xs text-zinc-600 font-mono ml-1">{gameBpm} BPM</span>
           )}
-          {audioEnabled && <span className="text-[10px] text-green-700 font-mono ml-1">♪</span>}
         </div>
         <button
           onClick={() => { stopGame(); onClose() }}
