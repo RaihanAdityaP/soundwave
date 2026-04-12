@@ -37,10 +37,10 @@ export default function SearchClient() {
   useEffect(() => {
     const q = searchParams.get('q')
     if (q) {
-      setQuery(q)
-      search(q)
+      const id = setTimeout(() => { void search(q) }, 0)
+      return () => clearTimeout(id)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchParams, search])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

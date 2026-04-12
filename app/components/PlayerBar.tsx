@@ -6,6 +6,38 @@ import { Play, Pause, SkipBack, SkipForward, Volume2, Volume1, VolumeX, Mic2 } f
 import { usePlayerStore } from '@/store/playerStore'
 import LyricsFullscreen from './LyricsFullscreen'
 
+type YTStateChangeEvent = { data: number }
+
+type YTPlayerLike = {
+  playVideo: () => void
+  pauseVideo: () => void
+  loadVideoById: (id: string) => void
+  cueVideoById: (id: string) => void
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void
+  getCurrentTime: () => number
+  getDuration: () => number
+  getPlayerState: () => number
+  setVolume: (volume: number) => void
+}
+
+type YTPlayerCtor = new (elementId: string, config: {
+  height: string
+  width: string
+  videoId: string
+  playerVars: Record<string, number>
+  events: {
+    onReady: () => void
+    onStateChange: (event: YTStateChangeEvent) => void
+  }
+}) => YTPlayerLike
+
+declare global {
+  interface Window {
+    YT?: { Player?: YTPlayerCtor }
+    onYouTubeIframeAPIReady?: () => void
+  }
+}
+
 function formatTime(seconds: number) {
   if (isNaN(seconds) || seconds < 0) return '0:00'
   const m = Math.floor(seconds / 60)
@@ -22,7 +54,7 @@ export default function PlayerBar() {
     onAudioPlaying,
   } = usePlayerStore()
 
-  const ytPlayerRef = useRef<any>(null)
+  const ytPlayerRef = useRef<YTPlayerLike | null>(null)
   const [ytReady, setYtReady] = useState(false)
   const [resolvedId, setResolvedId] = useState<string | null>(null)
   const [showFullscreenLyrics, setShowFullscreenLyrics] = useState(false)
@@ -31,6 +63,7 @@ export default function PlayerBar() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const playNextRef = useRef(playNext)
   const setIsPlayingRef = useRef(setIsPlaying)
+  const shouldAutoplayNextLoadRef = useRef(true)
   // Keep ref fresh so onStateChange closure always calls latest onAudioPlaying
   const onAudioPlayingRef = useRef(onAudioPlaying)
 
@@ -40,17 +73,22 @@ export default function PlayerBar() {
 
   // ── YouTube IFrame API ──────────────────────────────────────────────────
   useEffect(() => {
-    if ((window as any).YT?.Player) { setYtReady(true); return }
+    if (window.YT?.Player) {
+      const id = setTimeout(() => setYtReady(true), 0)
+      return () => clearTimeout(id)
+    }
     const tag = document.createElement('script')
     tag.src = 'https://www.youtube.com/iframe_api'
     document.head.appendChild(tag)
-    ;(window as any).onYouTubeIframeAPIReady = () => setYtReady(true)
+    window.onYouTubeIframeAPIReady = () => setYtReady(true)
   }, [])
 
   // ── Load track ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!currentTrack) return
 
+    const shouldAutoplay = isPlaying
+    shouldAutoplayNextLoadRef.current = shouldAutoplay
     setProgress(0)
 
     fetch(`/api/lyrics?title=${encodeURIComponent(currentTrack.title)}&artist=${encodeURIComponent(currentTrack.artist)}&duration=${currentTrack.duration}`)
@@ -60,8 +98,13 @@ export default function PlayerBar() {
 
     if (currentTrack.source === 'youtube') {
       setResolving(false)
-      setResolvedId(currentTrack.url ?? null)
+      const id = setTimeout(() => setResolvedId(currentTrack.url ?? null), 0)
+      return () => clearTimeout(id)
     } else if (currentTrack.source === 'deezer') {
+      // Stop audio lama dulu agar UI "loading" tidak bareng lagu lama yang masih muter
+      ytPlayerRef.current?.pauseVideo()
+      setIsPlaying(false)
+      setTimeout(() => setResolvedId(null), 0)
       setResolving(true)
       const query = currentTrack.youtubeQuery || `${currentTrack.title} ${currentTrack.artist}`
       fetch(`/api/resolve?q=${encodeURIComponent(query)}`)
@@ -139,7 +182,9 @@ export default function PlayerBar() {
     if (!resolvedId || !ytReady) return
 
     if (!ytPlayerRef.current) {
-      ytPlayerRef.current = new (window as any).YT.Player('yt-player', {
+      const YTPlayer = window.YT?.Player
+      if (!YTPlayer) return
+      ytPlayerRef.current = new YTPlayer('yt-player', {
         height: '0',
         width: '0',
         videoId: resolvedId,
@@ -147,10 +192,10 @@ export default function PlayerBar() {
         events: {
           onReady: () => {
             setSeekTo((seconds: number) => {
-              ytPlayerRef.current?.seekTo(seconds, true)
+              if (ytPlayerRef.current) ytPlayerRef.current.seekTo(seconds, true)
             })
           },
-          onStateChange: (e: any) => {
+          onStateChange: (e: YTStateChangeEvent) => {
             if (e.data === 0) playNextRef.current()
             if (e.data === 1) {
               setIsPlayingRef.current(true)
@@ -162,9 +207,13 @@ export default function PlayerBar() {
         },
       })
     } else {
-      ytPlayerRef.current.loadVideoById(resolvedId)
+      if (shouldAutoplayNextLoadRef.current) {
+        ytPlayerRef.current.loadVideoById(resolvedId)
+      } else {
+        ytPlayerRef.current.cueVideoById(resolvedId)
+      }
       setSeekTo((seconds: number) => {
-        ytPlayerRef.current?.seekTo(seconds, true)
+        if (ytPlayerRef.current) ytPlayerRef.current.seekTo(seconds, true)
       })
     }
   }, [resolvedId, ytReady])
@@ -228,7 +277,7 @@ export default function PlayerBar() {
 
   if (!currentTrack) return null
 
-  const duration = ytPlayerRef.current?.getDuration?.() || currentTrack.duration
+  const duration = currentTrack.duration
   const safeProgress = isNaN(progress) || !isFinite(progress) ? 0 : progress
   const currentSeconds = Math.floor(safeProgress * duration)
   const volumePct = Math.round(volume * 100)

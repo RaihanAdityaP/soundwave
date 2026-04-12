@@ -1,5 +1,28 @@
 import { Track } from '@/types'
 
+type DeezerSearchItem = {
+  id: number | string
+  title: string
+  duration: number
+  bpm?: number | null
+  artist: { name: string }
+  album: { cover_medium: string }
+}
+
+function isDeezerSearchItem(value: unknown): value is DeezerSearchItem {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    (typeof v.id === 'number' || typeof v.id === 'string') &&
+    typeof v.title === 'string' &&
+    typeof v.duration === 'number' &&
+    !!v.artist &&
+    typeof (v.artist as Record<string, unknown>).name === 'string' &&
+    !!v.album &&
+    typeof (v.album as Record<string, unknown>).cover_medium === 'string'
+  )
+}
+
 export async function searchDeezer(query: string): Promise<Track[]> {
   try {
     const res = await fetch(
@@ -7,9 +30,12 @@ export async function searchDeezer(query: string): Promise<Track[]> {
     )
     if (!res.ok) return []
     const data = await res.json()
-    if (!data.data?.length) return []
+    const items = Array.isArray((data as { data?: unknown[] }).data)
+      ? (data as { data: unknown[] }).data.filter(isDeezerSearchItem)
+      : []
+    if (!items.length) return []
 
-    return data.data.map((item: any): Track => ({
+    return items.map((item): Track => ({
       id: String(item.id),
       source: 'deezer',
       title: item.title,

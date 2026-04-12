@@ -1,5 +1,14 @@
 import { LyricLine } from '@/types'
 
+type LrclibTrack = {
+  id: number
+  trackName?: string
+  artistName?: string
+  duration?: number
+  syncedLyrics?: string
+  plainLyrics?: string
+}
+
 // ─── LRC parser ───────────────────────────────────────────────────────────────
 
 function parseLRC(lrc: string): LyricLine[] {
@@ -104,7 +113,7 @@ function cleanArtist(raw: string): string {
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
 function scoreMatch(
-  candidate: any,
+  candidate: LrclibTrack,
   titleVariantsList: string[],
   artist: string,
   duration?: number,
@@ -144,7 +153,7 @@ function scoreMatch(
 const UA = { 'User-Agent': 'SoundWave/1.0' }
 const TIMEOUT = 8000
 
-async function lrclibGet(title: string, artist: string, duration?: number): Promise<any | null> {
+async function lrclibGet(title: string, artist: string, duration?: number): Promise<LrclibTrack | null> {
   try {
     const params = new URLSearchParams({ track_name: title, artist_name: artist })
     if (duration !== undefined) params.set('duration', String(Math.round(duration)))
@@ -152,24 +161,24 @@ async function lrclibGet(title: string, artist: string, duration?: number): Prom
       headers: UA,
       signal: AbortSignal.timeout(TIMEOUT),
     })
-    if (res.status === 200) return await res.json()
+    if (res.status === 200) return await res.json() as LrclibTrack
     return null
   } catch { return null }
 }
 
-async function lrclibSearch(qs: string): Promise<any[]> {
+async function lrclibSearch(qs: string): Promise<LrclibTrack[]> {
   try {
     const res = await fetch(`https://lrclib.net/api/search?${qs}`, {
       headers: UA,
       signal: AbortSignal.timeout(TIMEOUT),
     })
     if (!res.ok) return []
-    const data = await res.json()
-    return Array.isArray(data) ? data : []
+    const data = await res.json() as unknown
+    return Array.isArray(data) ? data as LrclibTrack[] : []
   } catch { return [] }
 }
 
-function lyricsFromTrack(track: any): LyricLine[] | null {
+function lyricsFromTrack(track: LrclibTrack): LyricLine[] | null {
   if (track.syncedLyrics) {
     const parsed = parseLRC(track.syncedLyrics)
     if (parsed.length > 0) return parsed
@@ -210,7 +219,7 @@ export async function fetchLyrics(
   }
 
   // ── Strategy 2: search queries in parallel for all variants ─────────────
-  const searchPromises: Promise<any[]>[] = []
+  const searchPromises: Promise<LrclibTrack[]>[] = []
 
   for (const v of variants) {
     // track_name + artist_name
@@ -232,7 +241,7 @@ export async function fetchLyrics(
 
   // Deduplicate candidates by id
   const seen = new Set<number>()
-  const candidates: any[] = []
+  const candidates: LrclibTrack[] = []
   for (const batch of results) {
     for (const c of batch) {
       if (!seen.has(c.id)) {

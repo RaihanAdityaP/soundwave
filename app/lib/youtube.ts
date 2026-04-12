@@ -9,6 +9,30 @@ const INVIDIOUS_INSTANCES = [
   'https://yt.cdaut.de',
 ]
 
+type YTSearchItem = {
+  id?: { videoId?: string }
+}
+
+type YTVideoItem = {
+  id: string
+  snippet: {
+    title: string
+    channelTitle: string
+    thumbnails: {
+      medium?: { url?: string }
+      default?: { url?: string }
+    }
+  }
+  contentDetails: { duration: string }
+}
+
+type InvidiousVideo = {
+  videoId: string
+  title: string
+  author: string
+  lengthSeconds: number
+}
+
 function parseDuration(iso: string): number {
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
   if (!match) return 0
@@ -26,23 +50,28 @@ export async function searchYouTube(query: string): Promise<Track[]> {
     const searchRes = await fetch(
       `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&q=${encodeURIComponent(query)}&maxResults=10&key=${YT_API_KEY}`
     )
-    const searchData = await searchRes.json()
+    const searchData = await searchRes.json() as { items?: YTSearchItem[] }
     if (!searchData.items?.length) return []
 
-    const ids = searchData.items.map((i: any) => i.id.videoId).join(',')
+    const ids = searchData.items
+      .map((i) => i.id?.videoId)
+      .filter((id): id is string => !!id)
+      .join(',')
+    if (!ids) return []
     const detailRes = await fetch(
       `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${ids}&key=${YT_API_KEY}`
     )
-    const detailData = await detailRes.json()
+    const detailData = await detailRes.json() as { items?: YTVideoItem[] }
 
-    return detailData.items.map((item: any): Track => ({
+    return (detailData.items ?? []).map((item): Track => ({
       id: item.id,
       source: 'youtube',
       title: item.snippet.title,
       artist: item.snippet.channelTitle,
       thumbnail:
         item.snippet.thumbnails.medium?.url ||
-        item.snippet.thumbnails.default?.url,
+        item.snippet.thumbnails.default?.url ||
+        '',
       duration: parseDuration(item.contentDetails.duration),
       url: item.id,
     }))
@@ -59,10 +88,10 @@ export async function searchInvidious(query: string): Promise<Track[]> {
         { signal: AbortSignal.timeout(5000) }
       )
       if (!res.ok) continue
-      const data = await res.json()
+      const data = await res.json() as unknown
       if (!Array.isArray(data) || data.length === 0) continue
 
-      return data.slice(0, 10).map((item: any): Track => ({
+      return (data as InvidiousVideo[]).slice(0, 10).map((item): Track => ({
         id: item.videoId,
         source: 'youtube',
         title: item.title,
@@ -86,7 +115,7 @@ export async function resolveYouTubeId(query: string): Promise<string | null> {
       const res = await fetch(
         `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q=${encodeURIComponent(query)}&maxResults=1&key=${YT_API_KEY}`
       )
-      const data = await res.json()
+      const data = await res.json() as { items?: YTSearchItem[] }
       return data.items?.[0]?.id?.videoId ?? null
     }
   } catch {
@@ -100,7 +129,7 @@ export async function resolveYouTubeId(query: string): Promise<string | null> {
         { signal: AbortSignal.timeout(5000) }
       )
       if (!res.ok) continue
-      const data = await res.json()
+      const data = await res.json() as InvidiousVideo[]
       const id = data?.[0]?.videoId
       if (id) return id
     } catch {

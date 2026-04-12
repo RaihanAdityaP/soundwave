@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ListMusic, Heart, Plus, Trash2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -64,15 +64,18 @@ export default function LibraryPage() {
   const [desc, setDesc] = useState('')
   const router = useRouter()
 
-  async function load() {
+  const load = useCallback(async () => {
     const res = await fetch('/api/playlists?include_tracks=4')
     if (res.status === 401) { router.push('/auth/login'); return }
     const data = await res.json()
     setPlaylists(Array.isArray(data) ? data : [])
     setLoading(false)
-  }
+  }, [router])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const id = setTimeout(() => { void load() }, 0)
+    return () => clearTimeout(id)
+  }, [load])
 
   async function createPlaylist() {
     if (!name.trim()) return

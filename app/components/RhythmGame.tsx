@@ -43,6 +43,7 @@ type LaneEffect = {
 
 type GameState = 'idle' | 'countdown' | 'playing' | 'result'
 type GameMode = 'circle' | 'lane'
+type PendingGameState = { _fallback: ReturnType<typeof setTimeout> | null }
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   useEffect(() => { setIsPlayingRef.current = setIsPlaying }, [setIsPlaying])
 
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pendingGameRef = useRef<any>({})
+  const pendingGameRef = useRef<PendingGameState>({ _fallback: null })
 
   // ── Mount: pause musik saat game dibuka ──────────────────────────────────
   useEffect(() => {
@@ -295,7 +296,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       const el = performance.now() - gameStartTimeRef.current
       return prev
         .map(n => {
-          if (n.hit || n.missed) return n
+          if (n.hit) {
+            // tetap turun sebentar setelah di-hit biar tidak terlihat "freeze" di posisi lama
+            return { ...n, y: Math.min(1, n.y + 0.14) }
+          }
+          if (n.missed) return n
           const age = el - n.spawnTime
           const progress = Math.min(age / LANE_TRAVEL_TIME, 1)
           if (age > LANE_TRAVEL_TIME + GOOD_THRESHOLD) {
@@ -308,6 +313,10 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
           return { ...n, y: progress }
         })
         .filter(n => {
+          if (n.hit) {
+            const age = performance.now() - gameStartTimeRef.current - n.spawnTime
+            return age < LANE_TRAVEL_TIME + 240
+          }
           if (n.missed) {
             const age = performance.now() - gameStartTimeRef.current - n.spawnTime
             return age < LANE_TRAVEL_TIME + 800
@@ -395,15 +404,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     setTimeout(() => {
       seekToRef.current?.(0)
       setTimeout(() => {
-        setIsPlayingRef.current(true)
         setOnAudioPlaying(() => () => {
           startGameLoop(durationSec, bpm)
         })
-        // Fallback 2.5s
+        setIsPlayingRef.current(true)
+        // Fallback kalau event "playing" dari YouTube terlambat / tidak terpanggil
         const fallback = setTimeout(() => {
           setOnAudioPlaying(null)
           startGameLoop(durationSec, bpm)
-        }, 2500)
+        }, 1200)
         pendingGameRef.current._fallback = fallback
       }, 150)
     }, 100)
@@ -543,7 +552,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         setLaneEffects(eff => [...eff, {
           id: Date.now(), lane: laneIdx as 0|1|2|3, type, createdAt: elapsed,
         }])
-        return prev.map(n => n.id === target.id ? { ...n, hit: true } : n)
+        return prev.map(n => n.id === target.id ? { ...n, hit: true, y: Math.max(n.y, 1) } : n)
       })
     }
 
