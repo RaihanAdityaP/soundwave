@@ -51,8 +51,8 @@ const LANE_KEYS = ['d', 'f', 'j', 'k']
 const LANE_LABELS = ['D', 'F', 'J', 'K']
 const CIRCLE_HIT_WINDOW = 400
 const LANE_TRAVEL_TIME = 1200
-const PERFECT_THRESHOLD = 80
-const GOOD_THRESHOLD = 200
+const PERFECT_THRESHOLD = 110
+const GOOD_THRESHOLD = 260
 const EFFECT_DURATION = 600
 const DEFAULT_GAME_DURATION = 60
 const PERFECT_ACCURACY_POINTS = 100
@@ -64,11 +64,7 @@ const DEFAULT_BPM = 128
 const MIN_BPM = 60
 const MAX_BPM = 200
 
-// Note harus sudah mencapai minimal 78% perjalanan sebelum bisa di-hit
-// Fix: "stuck kalau dipencet sebelum note sampai bawah"
 const LANE_HIT_ZONE_MIN = 0.78
-
-// Cooldown per-lane (ms): cegah spam penalty saat tidak ada note
 const LANE_PRESS_COOLDOWN_MS = 400
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,20 +96,72 @@ function createPrng(seed: number) {
   }
 }
 
-function generateBeats(durationSec: number, bpm: number, seedKey: string): number[] {
+type BeatCandidate = { time: number; priority: number }
+
+function generateBeats(
+  durationSec: number,
+  bpm: number,
+  seedKey: string,
+  lyricAnchorsMs: number[] = [],
+): number[] {
   const safeBpm = Math.min(MAX_BPM, Math.max(MIN_BPM, bpm))
   const interval = 60000 / safeBpm
   const rand = createPrng(hashSeed(seedKey))
-  const beats: number[] = []
-  for (let t = 1000; t < durationSec * 1000; t += interval) {
-    beats.push(t)
-    const halfBeatChance = safeBpm > 140 ? 0.25 : 0.4
-    if (rand() > (1 - halfBeatChance)) beats.push(t + interval / 2)
+  const durationMs = durationSec * 1000
+  const candidates: BeatCandidate[] = []
+
+  let beatIndex = 0
+  for (let t = 1000; t < durationMs; t += interval, beatIndex++) {
+    const barPos = beatIndex % 4
+    const isDownbeat = barPos === 0
+    const isStrongBeat = barPos === 0 || barPos === 2
+
+    // Downbeat & strong beat selalu masuk
+    if (isStrongBeat) {
+      candidates.push({ time: t, priority: isDownbeat ? 4 : 3 })
+      continue
+    }
+
+    // Beat 2 & 4: chance lebih tinggi supaya note lebih banyak
+    const addBeatChance = safeBpm >= 150 ? 0.55 : safeBpm >= 130 ? 0.70 : 0.85
+    if (rand() < addBeatChance) {
+      candidates.push({ time: t, priority: 2 })
+    }
+
+    // Off-beat (subdivision)
+    const addHalfBeatChance = safeBpm >= 150 ? 0.15 : safeBpm >= 130 ? 0.25 : 0.35
+    if (rand() < addHalfBeatChance) {
+      candidates.push({ time: t + interval / 2, priority: 1 })
+    }
   }
-  return beats.sort((a, b) => a - b)
+
+  // Lyric anchors
+  for (const lyricTime of lyricAnchorsMs) {
+    if (lyricTime < 1000 || lyricTime > durationMs - 300) continue
+    const quantized = Math.round(lyricTime / interval) * interval
+    candidates.push({ time: quantized, priority: 5 })
+  }
+
+  const sorted = candidates
+    .map(c => ({ ...c, time: Math.round(c.time) }))
+    .filter(c => c.time >= 1000 && c.time <= durationMs - 120)
+    .sort((a, b) => a.time - b.time || b.priority - a.priority)
+
+  // Min gap 250ms antar note
+  const minGap = 250
+  const filtered: BeatCandidate[] = []
+  for (const candidate of sorted) {
+    const last = filtered[filtered.length - 1]
+    if (!last) { filtered.push(candidate); continue }
+    if (candidate.time - last.time >= minGap) { filtered.push(candidate); continue }
+    if (candidate.priority > last.priority) {
+      filtered[filtered.length - 1] = candidate
+    }
+  }
+
+  return filtered.map(c => c.time)
 }
 
-// Web Audio feedback — oscillator only, tidak tap ke stream eksternal
 function playHitSound(ctx: AudioContext, type: 'perfect' | 'good' | 'miss' | 'bad') {
   try {
     const osc = ctx.createOscillator()
@@ -132,7 +180,7 @@ function playHitSound(ctx: AudioContext, type: 'perfect' | 'good' | 'miss' | 'ba
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function RhythmGame({ onClose }: { onClose: () => void }) {
-  const { currentTrack, seekTo, setIsPlaying, resolving, setOnAudioPlaying } = usePlayerStore()
+  const { currentTrack, lyrics, seekTo, setIsPlaying, resolving, setOnAudioPlaying, setBlockAutoNext } = usePlayerStore()
 
   const [gameState, setGameState] = useState<GameState>('idle')
   const [countdown, setCountdown] = useState(3)
@@ -150,6 +198,8 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const [gameBpm, setGameBpm] = useState<number>(DEFAULT_BPM)
   const [selectedMode, setSelectedMode] = useState<GameMode | null>(null)
   const [audioEnabled, setAudioEnabled] = useState(false)
+  // Fix bug 2: state khusus untuk track apakah player benar-benar siap
+  const [playerReady, setPlayerReady] = useState(false)
 
   const [circleNotes, setCircleNotes] = useState<CircleNote[]>([])
   const [laneNotes, setLaneNotes] = useState<LaneNote[]>([])
@@ -167,7 +217,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const rngRef = useRef<() => number>(() => Math.random())
   const gameAreaRef = useRef<HTMLDivElement>(null)
 
-  // Score refs (stale closure fix)
   const comboRef = useRef(0)
   const scoreRef = useRef(0)
   const hitNotesRef = useRef(0)
@@ -178,7 +227,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const maxAccuracyPointsRef = useRef(0)
   const penaltyPointsRef = useRef(0)
 
-  // Lane press tracking
   const laneLastPressRef = useRef<number[]>([-Infinity, -Infinity, -Infinity, -Infinity])
   const laneHitInProgressRef = useRef<boolean[]>([false, false, false, false])
 
@@ -192,14 +240,27 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pendingGameRef = useRef<PendingGameState>({ _fallback: null })
 
-  // ── Mount: pause musik saat game dibuka ──────────────────────────────────
+  // Fix bug 2: player ready hanya kalau seekTo ada DAN tidak sedang resolving
   useEffect(() => {
-    // Fix #2: lagu tetap muter saat idle di rhythm game screen
+    if (seekTo && !resolving) {
+      const t = setTimeout(() => setPlayerReady(true), 300)
+      return () => clearTimeout(t)
+    } else {
+      setPlayerReady(false)
+    }
+  }, [seekTo, resolving])
+
+  // ── Mount ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
     setIsPlayingRef.current(false)
+    // Fix bug 3: block auto-next selama rhythm game aktif
+    setBlockAutoNext(true)
     const t = setTimeout(() => setMounted(true), 30)
     return () => {
       clearTimeout(t)
       setOnAudioPlaying(null)
+      // Unblock saat game ditutup
+      setBlockAutoNext(false)
     }
   }, [])
 
@@ -235,7 +296,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       return
     }
 
-    // Spawn notes
     while (
       nextBeatIdxRef.current < beatsRef.current.length &&
       beatsRef.current[nextBeatIdxRef.current] <= elapsed + LANE_TRAVEL_TIME
@@ -268,7 +328,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       nextBeatIdxRef.current++
     }
 
-    // Circle miss check
     setCircleNotes(prev => {
       const el = performance.now() - gameStartTimeRef.current
       return prev
@@ -291,15 +350,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
         })
     })
 
-    // Lane position update + miss check
     setLaneNotes(prev => {
       const el = performance.now() - gameStartTimeRef.current
       return prev
         .map(n => {
-          if (n.hit) {
-            // tetap turun sebentar setelah di-hit biar tidak terlihat "freeze" di posisi lama
-            return { ...n, y: Math.min(1, n.y + 0.14) }
-          }
+          if (n.hit) return { ...n, y: Math.min(1, n.y + 0.14) }
           if (n.missed) return n
           const age = el - n.spawnTime
           const progress = Math.min(age / LANE_TRAVEL_TIME, 1)
@@ -344,12 +399,15 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       pendingGameRef.current._fallback = null
     }
     const seedKey = `${currentTrack?.id ?? 'track'}-${gameModeRef.current}-${bpm}-${durationSec}`
-    beatsRef.current = generateBeats(durationSec, bpm, seedKey)
+    const lyricAnchorsMs = lyrics
+      .map(line => Math.round(line.time * 1000))
+      .filter(ms => Number.isFinite(ms))
+    beatsRef.current = generateBeats(durationSec, bpm, seedKey, lyricAnchorsMs)
     gameStartTimeRef.current = performance.now()
     setGameState('playing')
     rafRef.current = requestAnimationFrame(() => gameLoopRef.current())
     setOnAudioPlaying(null)
-  }, [currentTrack?.id])
+  }, [currentTrack?.id, lyrics])
 
   // ── Start countdown ───────────────────────────────────────────────────────
   const startGame = useCallback((mode: GameMode) => {
@@ -389,7 +447,7 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     missNotesRef.current = 0; totalNotesRef.current = 0
     accuracyPointsRef.current = 0; maxAccuracyPointsRef.current = 0
     penaltyPointsRef.current = 0; noteIdRef.current = 0; nextBeatIdxRef.current = 0
-    
+
     let c = 3
     const interval = setInterval(() => {
       c--
@@ -403,7 +461,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     countdownIntervalRef.current = interval
   }, [currentTrack, initAudioContext])
 
-  // Start playback tepat saat countdown selesai (tanpa muter saat countdown)
   const beginPlaying = useCallback((durationSec: number, bpm: number) => {
     if (pendingGameRef.current._fallback) {
       clearTimeout(pendingGameRef.current._fallback)
@@ -416,7 +473,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     seekToRef.current?.(0)
     setIsPlayingRef.current(true)
 
-    // Fallback kalau event "playing" terlambat / tidak terpanggil
     const fallback = setTimeout(() => {
       setOnAudioPlaying(null)
       startGameLoop(durationSec, bpm)
@@ -474,12 +530,11 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
     if (gameState !== 'playing' || gameModeRef.current !== 'lane') return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return  // abaikan auto-repeat
+      if (e.repeat) return
       const laneIdx = LANE_KEYS.indexOf(e.key.toLowerCase())
       if (laneIdx === -1) return
       e.preventDefault()
 
-      // Cegah double-hit dalam window 50ms
       if (laneHitInProgressRef.current[laneIdx]) return
       laneHitInProgressRef.current[laneIdx] = true
       setTimeout(() => { laneHitInProgressRef.current[laneIdx] = false }, 50)
@@ -490,24 +545,16 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
       const elapsed = now - gameStartTimeRef.current
 
       setLaneNotes(prev => {
-        // Kandidat: note yang sudah masuk hit zone (y >= LANE_HIT_ZONE_MIN)
         const candidates = prev.filter(
           n => !n.hit && !n.missed && n.lane === laneIdx && n.y >= LANE_HIT_ZONE_MIN
         )
 
         if (candidates.length === 0) {
-          // Cek note yang sedang turun tapi belum masuk hit zone
           const comingNotes = prev.filter(
             n => !n.hit && !n.missed && n.lane === laneIdx && n.y > 0 && n.y < LANE_HIT_ZONE_MIN
           )
+          if (comingNotes.length > 0) return prev
 
-          if (comingNotes.length > 0) {
-            // Note ada tapi belum sampai — ABAIKAN, tidak ada penalty
-            // Fix #1: "stuck kalau dipencet sebelum note sampai bawah"
-            return prev
-          }
-
-          // Tidak ada note aktif — penalty hanya kalau cooldown lewat
           const cooldownOk = now - laneLastPressRef.current[laneIdx] > LANE_PRESS_COOLDOWN_MS
           if (!cooldownOk) return prev
 
@@ -525,7 +572,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
 
         laneLastPressRef.current[laneIdx] = now
 
-        // Note terdekat hit line
         const target = candidates.reduce((a, b) =>
           Math.abs(a.y - 1) < Math.abs(b.y - 1) ? a : b
         )
@@ -533,8 +579,8 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
 
         let type: 'perfect' | 'good' | 'miss' = 'miss'
         let pts = 0
-        if (diff < 0.08) { type = 'perfect'; pts = 300 }
-        else if (diff < 0.18) { type = 'good'; pts = 100 }
+        if (diff < 0.11) { type = 'perfect'; pts = 300 }
+        else if (diff < 0.24) { type = 'good'; pts = 100 }
 
         if (type !== 'miss') {
           comboRef.current++
@@ -594,9 +640,9 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
   const rating = getRating(accuracy)
   const trackBpm = currentTrack?.bpm && currentTrack.bpm > 0 ? currentTrack.bpm : null
 
-  // Fix #3: YouTube tracks tidak support seekTo di awal, disable rhythm game
   const isYouTubeTrack = currentTrack?.source === 'youtube'
-  const canStartGame = !resolving && !!seekTo && !isYouTubeTrack
+  // Fix bug 2: pakai playerReady bukan !!seekTo
+  const canStartGame = playerReady && !isYouTubeTrack
 
   if (!currentTrack) return null
 
@@ -712,7 +758,6 @@ export default function RhythmGame({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
-            {/* YouTube warning — Fix #3 */}
             {isYouTubeTrack && (
               <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-5 py-4 max-w-xs mx-4">
                 <AlertCircle size={18} className="text-amber-400 shrink-0 mt-0.5" />
