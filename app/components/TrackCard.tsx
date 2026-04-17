@@ -27,7 +27,6 @@ export default function TrackCard({ track, trackList, trackIndex, onRemove }: Pr
   const [showRhythm, setShowRhythm] = useState(false)
   const isCurrentlyPlaying = currentTrack?.id === track.id && isPlaying
   const isCurrentTrack = currentTrack?.id === track.id
-  // Show loading spinner on this card if it's selected and still resolving YT id
   const isLoading = isCurrentTrack && resolving
 
   const handlePlay = () => {
@@ -81,14 +80,14 @@ export default function TrackCard({ track, trackList, trackIndex, onRemove }: Pr
             unoptimized={track.source === 'deezer'}
           />
 
-          {/* Loading overlay — pulsing while resolving */}
+          {/* Loading overlay */}
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded">
               <Loader2 size={16} className="text-green-400 animate-spin" />
             </div>
           )}
 
-          {/* Hover play icon — hidden while loading */}
+          {/* Hover play icon */}
           {!isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded">
               <Play size={16} className="text-white fill-white" />
@@ -117,21 +116,41 @@ export default function TrackCard({ track, trackList, trackIndex, onRemove }: Pr
           <p className="text-zinc-400 text-xs truncate">{track.artist}</p>
         </div>
 
-        {/* Loading text — visible on larger screens while resolving */}
+        {/* Loading text */}
         {isLoading && (
           <span className="hidden sm:inline-flex text-xs text-zinc-500 shrink-0 animate-pulse">
             Loading…
           </span>
         )}
 
-        {/* Source badge — hidden while loading */}
+        {/* Source badge — logo asli Deezer/YouTube */}
         {!isLoading && (
-          <span className={`hidden sm:inline-flex text-xs px-2 py-0.5 rounded-full shrink-0 ${
-            track.source === 'youtube'
-              ? 'bg-red-900/50 text-red-400'
-              : 'bg-purple-900/50 text-purple-400'
-          }`}>
-            {track.source === 'youtube' ? 'YT' : 'DZ'}
+          <span className="hidden sm:inline-flex items-center justify-center shrink-0">
+            {track.source === 'youtube' ? (
+              // YouTube logo
+              <span className="flex items-center justify-center w-7 h-5 rounded overflow-hidden bg-transparent">
+                <img
+                  src="/youtube.png"
+                  alt="YouTube"
+                  width={28}
+                  height={20}
+                  className="object-contain w-7 h-5"
+                  style={{ display: 'block' }}
+                />
+              </span>
+            ) : (
+              // Deezer logo
+              <span className="flex items-center justify-center w-7 h-5 rounded overflow-hidden bg-transparent">
+                <img
+                  src="/deezer.png"
+                  alt="Deezer"
+                  width={28}
+                  height={20}
+                  className="object-contain w-7 h-5"
+                  style={{ display: 'block' }}
+                />
+              </span>
+            )}
           </span>
         )}
 

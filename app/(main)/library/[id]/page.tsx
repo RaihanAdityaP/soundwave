@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ListMusic, Heart, Play } from 'lucide-react'
+import { ListMusic, Heart, Play, Shuffle } from 'lucide-react'
 import { Track } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import TrackCard from '@/components/TrackCard'
@@ -12,6 +12,15 @@ type PlaylistMeta = {
   name: string
   description: string | null
   is_liked_songs: boolean
+}
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const shuffled = [...arr]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  return shuffled
 }
 
 export default function PlaylistDetailPage() {
@@ -73,6 +82,13 @@ export default function PlaylistDetailPage() {
     setTracks(prev => prev.filter(t => t.id !== trackId))
   }
 
+  const handlePlayAll = () => setQueue(tracks, 0)
+
+  const handleShuffle = () => {
+    const shuffled = shuffleArray(tracks)
+    setQueue(shuffled, 0)
+  }
+
   if (loading) return <p className="text-zinc-400 text-sm">Loading...</p>
   if (!playlist) return null
 
@@ -103,13 +119,22 @@ export default function PlaylistDetailPage() {
           <p className="text-zinc-500 text-sm mt-1">{tracks.length} songs</p>
 
           {tracks.length > 0 && (
-            <button
-              onClick={() => setQueue(tracks, 0)}
-              className="mt-3 flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold text-sm rounded-full px-5 py-2 transition-colors"
-            >
-              <Play size={15} className="fill-black" />
-              Play All
-            </button>
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <button
+                onClick={handlePlayAll}
+                className="flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold text-sm rounded-full px-5 py-2 transition-colors"
+              >
+                <Play size={15} className="fill-black" />
+                Play All
+              </button>
+              <button
+                onClick={handleShuffle}
+                className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold text-sm rounded-full px-5 py-2 transition-colors"
+              >
+                <Shuffle size={15} />
+                Shuffle
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -133,7 +158,6 @@ export default function PlaylistDetailPage() {
               track={track}
               trackList={tracks}
               trackIndex={i}
-              // liked songs tidak bisa dihapus dari sini (unlike lewat tombol hati)
               onRemove={!isLiked ? () => removeTrack(track.id) : undefined}
             />
           ))}

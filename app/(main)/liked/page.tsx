@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Heart, Play } from 'lucide-react'
+import { Heart, Play, Shuffle } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import TrackCard from '@/components/TrackCard'
 import { Track } from '@/types'
@@ -11,6 +11,15 @@ import { usePlayerStore } from '@/store/playerStore'
 type LikedPlaylist = {
   id: string
   name: string
+}
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const shuffled = [...arr]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  return shuffled
 }
 
 export default function LikedPage() {
@@ -83,13 +92,22 @@ export default function LikedPage() {
       </div>
 
       {tracks.length > 0 && (
-        <button
-          onClick={() => setQueue(tracks, 0)}
-          className="inline-flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold text-sm rounded-full px-4 py-2 transition-colors"
-        >
-          <Play size={15} className="fill-black" />
-          Play
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setQueue(tracks, 0)}
+            className="inline-flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold text-sm rounded-full px-5 py-2 transition-colors"
+          >
+            <Play size={15} className="fill-black" />
+            Play
+          </button>
+          <button
+            onClick={() => setQueue(shuffleArray(tracks), 0)}
+            className="inline-flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold text-sm rounded-full px-5 py-2 transition-colors"
+          >
+            <Shuffle size={15} />
+            Shuffle
+          </button>
+        </div>
       )}
 
       {tracks.length === 0 ? (
